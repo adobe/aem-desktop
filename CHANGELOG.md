@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/adobe/aem-desktop/compare/v1.1.2...v1.1.3) (2026-06-05)
+
+
+### Bug Fixes
+
+* use official Adobe sidekick icon for app and UI logo ([00bf789](https://github.com/adobe/aem-desktop/commit/00bf789a6186323dbfc50a66dbc1392993b52892))
+
 ## [1.1.2](https://github.com/adobe/aem-desktop/compare/v1.1.1...v1.1.2) (2026-06-05)
 
 
