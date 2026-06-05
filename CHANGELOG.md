@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/adobe/aem-desktop/compare/v1.1.1...v1.1.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* stop keychain prompt, correct app name, add branding ([bd30958](https://github.com/adobe/aem-desktop/commit/bd309582b838574c1e4840cd72e2dbb9c34a390f))
+
 ## [1.1.1](https://github.com/adobe/aem-desktop/compare/v1.1.0...v1.1.1) (2026-06-05)
 
 
