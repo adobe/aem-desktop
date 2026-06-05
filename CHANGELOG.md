@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/adobe/aem-desktop/compare/v1.0.0...v1.1.0) (2026-06-05)
+
+
+### Features
+
+* dev CDP debugging, double-click screenshots, electron-log logging ([6197f14](https://github.com/adobe/aem-desktop/commit/6197f145c49ddd148d75207b9ca6d4c3402dcff8))
+
 # 1.0.0 (2026-06-05)
 
 
