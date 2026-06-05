@@ -1,0 +1,49 @@
+appId: com.adobe.aem.desktop
+productName: AEM Desktop
+copyright: Copyright 2026 Adobe. All rights reserved.
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - '!**/*.test.js'
+  - '!test/**/*'
+
+# Auto-update + release hosting. electron-updater reads latest-mac.yml from
+# the matching GitHub release at runtime to discover and download updates.
+publish:
+  provider: github
+  owner: adobe
+  repo: aem-desktop
+
+mac:
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization uses APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID.
+  notarize: true
+  target:
+    # DMG is the user-facing installer; ZIP is required by electron-updater
+    # for delta/auto updates on macOS.
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications

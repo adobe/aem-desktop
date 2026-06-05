@@ -1,0 +1,42 @@
+name: Build
+on: [push]
+
+env:
+  CI_BRANCH: ${{ github.ref_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  build:
+    name: Build (macOS, unsigned smoke)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+      - run: npm ci
+      # Package without signing to catch electron-builder config regressions
+      # on every push. Signing/notarization happens only in release.yaml.
+      - name: electron-builder (dir, unsigned)
+        run: npx electron-builder --mac --dir --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'

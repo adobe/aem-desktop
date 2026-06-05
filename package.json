@@ -1,0 +1,55 @@
+{
+  "name": "@adobe/aem-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop app for Adobe Experience Manager Edge Delivery Services",
+  "author": "Adobe",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/main/index.js",
+  "homepage": "https://github.com/adobe/aem-desktop#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adobe/aem-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/adobe/aem-desktop/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "node scripts/dev.js",
+    "build": "electron-builder --mac --publish never",
+    "build:dir": "electron-builder --dir --publish never",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "semantic-release": "semantic-release",
+    "semantic-release-dry": "semantic-release --dry-run --branches $CI_BRANCH",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "electron-log": "5.2.4",
+    "electron-updater": "6.3.9"
+  },
+  "devDependencies": {
+    "@adobe/eslint-config-helix": "3.0.16",
+    "@eslint/config-helpers": "0.5.0",
+    "@semantic-release/changelog": "6.0.3",
+    "@semantic-release/exec": "7.1.0",
+    "@semantic-release/git": "10.0.1",
+    "electron": "42.3.3",
+    "electron-builder": "25.1.8",
+    "eslint": "9.4.0",
+    "globals": "15.15.0",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
+    "semantic-release": "25.0.2"
+  },
+  "lint-staged": {
+    "*.js": "eslint"
+  }
+}
