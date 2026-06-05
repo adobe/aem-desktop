@@ -14,8 +14,12 @@ import {
 } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
+import { screenshotFilename } from './dev-config.js';
+import log from './logger.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rendererDir = join(here, '..', 'renderer');
@@ -34,15 +38,39 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
+  let devTools;
+  if (!app.isPackaged) {
+    devTools = await import('./dev-reload.js');
+    // Attach before load so the renderer's startup logs are captured too.
+    devTools.forwardRendererConsole(mainWindow);
+  }
+
   await mainWindow.loadFile(join(rendererDir, 'index.html'));
 
-  if (!app.isPackaged) {
-    const { watchRenderer } = await import('./dev-reload.js');
-    watchRenderer(mainWindow, rendererDir);
+  if (devTools) {
+    devTools.watchRenderer(mainWindow, rendererDir);
   }
 }
 
 ipcMain.handle('app:get-version', () => app.getVersion());
+
+// Development convenience: double-clicking anywhere in the UI captures a
+// screenshot to a temp file and logs the path to stderr for agents to pick up.
+ipcMain.handle('dev:capture-screenshot', async (event) => {
+  if (app.isPackaged) {
+    return null;
+  }
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) {
+    return null;
+  }
+  const image = await win.webContents.capturePage();
+  const file = join(tmpdir(), screenshotFilename());
+  await writeFile(file, image.toPNG());
+  // `warn` routes to stderr in electron-log; agents read the path from stderr.
+  log.scope('screenshot').warn(file);
+  return file;
+});
 
 app.whenReady().then(async () => {
   await createWindow();

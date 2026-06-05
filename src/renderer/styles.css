@@ -41,6 +41,12 @@ body {
   color: var(--muted);
 }
 
+.hmr {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: var(--accent);
+}
+
 .version {
   margin-top: 1.5rem;
   font-size: 0.85rem;

@@ -35,6 +35,8 @@ export default defineConfig([
     },
     rules: {
       'import/no-extraneous-dependencies': ['error', { devDependencies: true }],
+      // Main/dev scripts log to the terminal (forwarded to `npm run dev`).
+      'no-console': 'off',
     },
   },
   {
@@ -53,6 +55,10 @@ export default defineConfig([
     files: ['src/renderer/**/*.js'],
     languageOptions: {
       globals: { ...globals.browser },
+    },
+    rules: {
+      // Renderer console output is forwarded to the dev terminal.
+      'no-console': 'off',
     },
   },
 ]);

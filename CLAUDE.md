@@ -31,7 +31,9 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 | `src/main/window-options.js`  | Pure builder of secure `BrowserWindow` options (unit tested)             |
 | `src/main/update-policy.js`   | Pure `shouldAutoUpdate()` decision (unit tested)                         |
 | `src/main/updater.js`         | electron-updater wiring against the GitHub release feed                  |
-| `src/main/dev-reload.js`      | In-process renderer live-reload (dev only, uses `node:fs` watch)         |
+| `src/main/logger.js`          | Shared `electron-log` logger (use instead of `console.log`)              |
+| `src/main/dev-config.js`      | Pure dev helpers: CDP port + screenshot filename (unit tested)           |
+| `src/main/dev-reload.js`      | Renderer live-reload + console forwarding (dev only)                     |
 | `src/preload/index.cjs`       | Sandboxed `contextBridge` API — **the only CommonJS file** (see note)    |
 | `src/renderer/`               | `index.html` + `renderer.js` + `styles.css` — the UI shell              |
 | `scripts/dev.js`              | Dev launcher: runs Electron, restarts on main/preload change            |
@@ -81,6 +83,39 @@ forced into the system browser via `setWindowOpenHandler`.
 True module-level HMR requires a bundler runtime; we deliberately use full
 reload to stay bundler-free. The renderer is plain ESM so reloads are instant.
 
+### CDP remote debugging (dev only)
+
+`npm run dev` launches Electron with the Chrome DevTools Protocol enabled
+(`--remote-debugging-port`, default `9223`, override with `AEM_DESKTOP_CDP_PORT`)
+and `--remote-allow-origins=*`, so an agent or tool can attach over CDP
+(e.g. `http://localhost:9223/json`). Port `9223` is used because Chrome's default
+remote-debugging port is `9222`. This is wired only in `scripts/dev.js`;
+packaged builds never enable it.
+
+### Screenshot-on-double-click (dev only)
+
+In development, **double-clicking anywhere in the UI** captures a screenshot of
+the window. The main process (`dev:capture-screenshot` IPC in `index.js`) writes
+it to a PNG in the OS temp dir and logs the absolute path to **stderr** via the
+logger, so an agent can pick it up:
+
+```
+HH:MM:SS.mmm (screenshot) › /var/folders/.../aem-desktop-<timestamp>.png
+```
+
+The handler is a no-op in packaged builds (`app.isPackaged`). The renderer wiring
+is a single `dblclick` listener in `renderer.js`; the bridge call is
+`window.aemDesktop.captureScreenshot()`.
+
+## Logging
+
+Use the shared logger (`src/main/logger.js`, backed by `electron-log`) instead of
+`console.log` in main-process code. It timestamps, scopes, persists to the OS log
+dir, and routes by level: **`error`/`warn` → stderr**, everything else → stdout.
+Dev scripts that run under plain Node use `electron-log/node` (see `scripts/dev.js`).
+Renderer `console.*` is forwarded through the logger in dev (see `forwardRendererConsole`
+in `dev-reload.js`) so it appears in the `npm run dev` terminal.
+
 ## Auto-update
 
 `updater.js` wires `electron-updater` to the GitHub release feed declared in
@@ -92,6 +127,7 @@ force-disabled with `AEM_DESKTOP_DISABLE_UPDATES=1` (see `update-policy.js`).
 The macOS update channel needs the **ZIP** target plus `latest-mac.yml`; both
 are produced by electron-builder and attached to each GitHub release by
 semantic-release. Auto-update only works on a **signed + notarized** build.
+Builds are **Apple Silicon (arm64) only** — Intel Macs are EOL, so no x64 target.
 
 ## Release pipeline
 

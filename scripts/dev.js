@@ -14,6 +14,8 @@ import { watch } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import log from 'electron-log/node.js';
+import { resolveCdpPort } from '../src/main/dev-config.js';
 
 const require = createRequire(import.meta.url);
 // The `electron` package exports the absolute path to its binary in Node.
@@ -24,11 +26,16 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Renderer changes are hot-reloaded in-process by src/main/dev-reload.js.
 const watchDirs = [join(root, 'src', 'main'), join(root, 'src', 'preload')];
 
+// Launch with Chrome DevTools Protocol enabled so agents/tools can attach.
+const cdpPort = resolveCdpPort(process.env);
+const electronArgs = ['.', `--remote-debugging-port=${cdpPort}`, '--remote-allow-origins=*'];
+
 let child;
 let restarting;
 
 function start() {
-  child = spawn(electronBinary, ['.'], { cwd: root, stdio: 'inherit' });
+  log.info(`[dev] launching Electron (CDP http://localhost:${cdpPort}, renderer hot-reload + main restart)`);
+  child = spawn(electronBinary, electronArgs, { cwd: root, stdio: 'inherit' });
   child.on('exit', (code) => {
     if (!restarting && code !== null) {
       process.exit(code);
@@ -44,8 +51,7 @@ function restart() {
       child.removeAllListeners('exit');
       child.kill();
     }
-    // eslint-disable-next-line no-console
-    console.log('[dev] restarting Electron (main/preload changed)');
+    log.info('[dev] restarting Electron (main/preload changed)');
     start();
   }, 150);
 }

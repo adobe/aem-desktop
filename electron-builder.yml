@@ -29,15 +29,13 @@ mac:
   notarize: true
   target:
     # DMG is the user-facing installer; ZIP is required by electron-updater
-    # for delta/auto updates on macOS.
+    # for delta/auto updates on macOS. Apple Silicon only (Intel Macs are EOL).
     - target: dmg
       arch:
         - arm64
-        - x64
     - target: zip
       arch:
         - arm64
-        - x64
 
 dmg:
   contents:

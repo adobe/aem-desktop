@@ -9,13 +9,12 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
+import log from 'electron-log';
 
-// Sandboxed preload scripts must be CommonJS; ESM imports are unavailable
-// when `sandbox: true`. This is the only non-ESM module in the app.
-const { contextBridge, ipcRenderer } = require('electron');
+// Single shared logger for the main process. electron-log writes to the OS log
+// directory and to the console; `error`/`warn` go to stderr, everything else to
+// stdout. Prefer this over `console.log` so output is timestamped, scoped, and
+// persisted to a file. `initialize()` wires the renderer bridge for future use.
+log.initialize?.();
 
-contextBridge.exposeInMainWorld('aemDesktop', {
-  getVersion: () => ipcRenderer.invoke('app:get-version'),
-  // Resolves to the temp-file path in development; null in packaged builds.
-  captureScreenshot: () => ipcRenderer.invoke('dev:capture-screenshot'),
-});
+export default log;
