@@ -27,6 +27,11 @@ test('app icon is present for electron-builder', () => {
   assert.ok(icns.size > 0, 'build/icon.icns must exist and be non-empty');
 });
 
+test('renderer logo is present', () => {
+  const logo = statSync(join(root, 'src', 'renderer', 'logo.png'));
+  assert.ok(logo.size > 0, 'src/renderer/logo.png must exist and be non-empty');
+});
+
 test('Adobe Clean fonts are bundled with the renderer', () => {
   for (const weight of ['Regular', 'Medium', 'Bold']) {
     const file = join(root, 'src', 'renderer', 'fonts', `AdobeClean-${weight}.otf`);
