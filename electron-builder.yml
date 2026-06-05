@@ -21,6 +21,10 @@ publish:
 
 mac:
   category: public.app-category.developer-tools
+  # Space-free artifact name. productName ("AEM Desktop") has a space, and
+  # GitHub rewrites spaces in uploaded asset names (-> dots), which then no
+  # longer match the URLs in latest-mac.yml and breaks auto-update with a 404.
+  artifactName: AEM-Desktop-${version}-${arch}.${ext}
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

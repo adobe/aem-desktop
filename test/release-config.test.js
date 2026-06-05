@@ -31,6 +31,16 @@ test('electron-builder emits both DMG and ZIP (ZIP required for auto-update)', (
   assert.match(cfg, /target:\s*zip/);
 });
 
+test('mac artifactName is space-free so GitHub keeps the update-feed names', () => {
+  const cfg = read('electron-builder.yml');
+  const line = cfg.split('\n').map((l) => l.trim()).find((l) => l.startsWith('artifactName:'));
+  assert.ok(line, 'electron-builder.yml must set a mac artifactName');
+  const value = line.slice('artifactName:'.length).trim();
+  assert.ok(!value.includes(' '), `artifactName must not contain spaces: ${value}`);
+  assert.match(value, /\$\{version\}/);
+  assert.match(value, /\$\{arch\}/);
+});
+
 test('electron-builder publishes to the GitHub release feed', () => {
   const cfg = read('electron-builder.yml');
   assert.match(cfg, /provider:\s*github/);

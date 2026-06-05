@@ -33,8 +33,8 @@ module.exports = {
       assets: [
         { path: 'dist/*.dmg', label: 'macOS Disk Image' },
         { path: 'dist/*.dmg.blockmap' },
-        { path: 'dist/*-mac.zip' },
-        { path: 'dist/*-mac.zip.blockmap' },
+        { path: 'dist/*.zip' },
+        { path: 'dist/*.zip.blockmap' },
         { path: 'dist/latest-mac.yml' },
       ],
     }],
