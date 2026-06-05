@@ -1,3 +1,10 @@
+## [1.1.4](https://github.com/adobe/aem-desktop/compare/v1.1.3...v1.1.4) (2026-06-05)
+
+
+### Bug Fixes
+
+* regenerate app icon and logo from high-res sidekick.svg ([ae2a331](https://github.com/adobe/aem-desktop/commit/ae2a3312edf07b452f9bfa2374d9f68153e99c9c)), closes [hi#res](https://github.com/hi/issues/res)
+
 ## [1.1.3](https://github.com/adobe/aem-desktop/compare/v1.1.2...v1.1.3) (2026-06-05)
 
 
