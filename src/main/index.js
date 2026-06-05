@@ -21,6 +21,12 @@ import { initAutoUpdater } from './updater.js';
 import { screenshotFilename } from './dev-config.js';
 import log from './logger.js';
 
+// Use the basic (plaintext) Chromium password store instead of the macOS
+// keychain. Without this, Chromium's "Safe Storage" cookie encryption prompts
+// for keychain access on launch. This app stores nothing sensitive; revisit
+// (and remove this) if/when real secret storage via safeStorage is added.
+app.commandLine.appendSwitch('password-store', 'basic');
+
 const here = dirname(fileURLToPath(import.meta.url));
 const rendererDir = join(here, '..', 'renderer');
 const preloadPath = join(here, '..', 'preload', 'index.cjs');

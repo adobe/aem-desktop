@@ -1,3 +1,27 @@
+@font-face {
+  font-family: 'Adobe Clean';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('fonts/AdobeClean-Regular.otf') format('opentype');
+}
+
+@font-face {
+  font-family: 'Adobe Clean';
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url('fonts/AdobeClean-Medium.otf') format('opentype');
+}
+
+@font-face {
+  font-family: 'Adobe Clean';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('fonts/AdobeClean-Bold.otf') format('opentype');
+}
+
 :root {
   color-scheme: dark;
   --bg: #1a1a1a;
@@ -13,7 +37,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Adobe Clean', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--fg);
   height: 100vh;
@@ -27,13 +51,17 @@ body {
   user-select: none;
 }
 
-.shell h1 {
-  font-size: 2.5rem;
-  letter-spacing: -0.02em;
+.logo {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 1.25rem;
+  display: block;
 }
 
-.shell h1::first-letter {
-  color: var(--accent);
+.shell h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .tagline {
