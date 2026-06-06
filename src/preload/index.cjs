@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
 
   getDaAuthStatus: () => ipcRenderer.invoke('da:auth-status'),
   loginDa: () => ipcRenderer.invoke('da:login'),
+  logoutDa: () => ipcRenderer.invoke('da:logout'),
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
@@ -41,6 +42,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   },
 
   checkPush: (options) => ipcRenderer.invoke('push:check', options),
+  getPushDiffs: (options) => ipcRenderer.invoke('push:diffs', options),
   runPush: (options) => ipcRenderer.invoke('push:run', options),
   cancelPush: () => ipcRenderer.invoke('push:cancel'),
   onPushProgress: (callback) => {

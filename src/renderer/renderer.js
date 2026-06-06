@@ -26,6 +26,9 @@ import {
   treeFocusIn,
   treeKeydown,
 } from './tree-nav.js';
+import {
+  renderReviewFileList, renderDiffView, wireReviewKeyboard,
+} from './review-view.js';
 
 const state = {
   view: 'home',
@@ -64,6 +67,7 @@ const els = {
   fileTree: document.getElementById('file-tree'),
   authStatus: document.getElementById('auth-status'),
   signInBtn: document.getElementById('sign-in-btn'),
+  signOutBtn: document.getElementById('sign-out-btn'),
   contentTitle: document.getElementById('content-title'),
   contentMode: document.getElementById('content-mode'),
   contentBody: document.getElementById('content-body'),
@@ -88,19 +92,15 @@ const els = {
   syncConflictWarning: document.getElementById('sync-conflict-warning'),
   syncConflictText: document.getElementById('sync-conflict-text'),
   syncOverwriteConflicts: document.getElementById('sync-overwrite-conflicts'),
-  pushModal: document.getElementById('push-modal'),
-  pushSummary: document.getElementById('push-summary'),
-  pushModifiedSection: document.getElementById('push-modified-section'),
-  pushModifiedList: document.getElementById('push-modified-list'),
-  pushNewSection: document.getElementById('push-new-section'),
-  pushNewList: document.getElementById('push-new-list'),
-  pushDeletedSection: document.getElementById('push-deleted-section'),
-  pushDeletedList: document.getElementById('push-deleted-list'),
-  pushProgress: document.getElementById('push-progress'),
-  pushProgressFill: document.getElementById('push-progress-fill'),
-  pushProgressText: document.getElementById('push-progress-text'),
-  pushStart: document.getElementById('push-start'),
-  pushCancel: document.getElementById('push-cancel'),
+  reviewView: document.getElementById('review-view'),
+  reviewFileContainer: document.getElementById('review-file-container'),
+  reviewDiffTitle: document.getElementById('review-diff-title'),
+  reviewDiffBody: document.getElementById('review-diff-body'),
+  reviewCancel: document.getElementById('review-cancel'),
+  reviewPush: document.getElementById('review-push'),
+  reviewProgress: document.getElementById('review-progress'),
+  reviewProgressFill: document.getElementById('review-progress-fill'),
+  reviewProgressText: document.getElementById('review-progress-text'),
 };
 
 function activeSite() {
@@ -109,7 +109,7 @@ function activeSite() {
 
 function renderNav() {
   const site = activeSite();
-  if (!site || state.view !== 'browse') {
+  if (!site || (state.view !== 'browse' && state.view !== 'review')) {
     return;
   }
   els.navOrg.textContent = site.org;
@@ -119,19 +119,24 @@ function renderNav() {
 
 function showView(view) {
   state.view = view;
-  const isBrowse = view === 'browse';
 
-  els.app.classList.toggle('is-browse', isBrowse);
+  els.app.classList.toggle('is-browse', view === 'browse' || view === 'review');
 
-  if (isBrowse) {
-    hide(els.homeView);
+  hide(els.homeView);
+  hide(els.browseView);
+  hide(els.reviewView);
+  hide(els.siteNav);
+
+  if (view === 'browse') {
     show(els.browseView);
+    show(els.siteNav);
+    renderNav();
+  } else if (view === 'review') {
+    show(els.reviewView);
     show(els.siteNav);
     renderNav();
   } else {
     show(els.homeView);
-    hide(els.browseView);
-    hide(els.siteNav);
   }
 }
 
@@ -141,6 +146,9 @@ function goHome() {
 }
 
 async function enterBrowse(siteId) {
+  if (!state.authenticated) {
+    return;
+  }
   state.activeSiteId = siteId;
   resetTree();
   renderContentPlaceholder('Select a file from the folder list.');
@@ -233,11 +241,14 @@ function renderAuthStatus() {
     els.authStatus.textContent = 'Signed in to DA';
     els.authStatus.classList.add('ok');
     hide(els.signInBtn);
+    show(els.signOutBtn);
   } else {
-    els.authStatus.textContent = 'Not signed in';
+    els.authStatus.textContent = 'Sign in to DA to open a site';
     els.authStatus.classList.remove('ok');
     show(els.signInBtn);
+    hide(els.signOutBtn);
   }
+  renderSites();
 }
 
 let previewWebview = null;
@@ -443,6 +454,10 @@ async function hardRefresh() {
   state.tree.cache = {};
   state.tree.syncBadges = new Map();
 
+  if (previewWebview) {
+    previewWebview.reloadIgnoringCache();
+  }
+
   for (const daPath of expanded) {
     await loadFolder(daPath); // eslint-disable-line no-await-in-loop
   }
@@ -489,9 +504,15 @@ async function refreshAuthStatus() {
     state.authenticated = false;
   }
   renderAuthStatus();
+  if (!state.authenticated && state.view === 'browse') {
+    goHome();
+  }
 }
 
 async function selectSite(siteId) {
+  if (!state.authenticated) {
+    return;
+  }
   await enterBrowse(siteId);
 }
 
@@ -550,6 +571,8 @@ function renderSites() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'site-btn';
+    btn.disabled = !state.authenticated;
+    btn.title = state.authenticated ? '' : 'Sign in to DA to open this site';
     btn.innerHTML = `<span class="site-name">${siteLabel(site)}</span><span class="site-branch">${site.branch}</span>`;
     btn.addEventListener('click', () => selectSite(site.id));
 
@@ -596,9 +619,28 @@ async function handleAddSite(event) {
     state.sites = await window.aemDesktop.listSites();
     els.siteUrlInput.value = '';
     hide(els.addSiteForm);
-    await enterBrowse(site.id);
+    if (state.authenticated) {
+      await enterBrowse(site.id);
+    }
   } catch (err) {
     setError(err.message || 'Failed to add site');
+  }
+}
+
+async function handleSignOut() {
+  els.signOutBtn.disabled = true;
+  try {
+    const status = await window.aemDesktop.logoutDa();
+    state.authenticated = status.authenticated;
+    renderAuthStatus();
+    if (state.view === 'browse') {
+      goHome();
+    }
+  } catch (err) {
+    els.authStatus.textContent = err.message || 'Sign-out failed';
+    els.authStatus.classList.remove('ok');
+  } finally {
+    els.signOutBtn.disabled = false;
   }
 }
 
@@ -948,19 +990,9 @@ async function startSync() {
 }
 
 let pushing = false;
-let pushStatus = null;
+let reviewDiffs = [];
+let reviewSelectedPath = null;
 let removePushProgressListener = null;
-
-function renderPushFileList(listEl, files, cssClass) {
-  listEl.replaceChildren();
-  for (const f of files) {
-    const li = document.createElement('li');
-    li.className = cssClass;
-    li.textContent = displayPath(f);
-    li.title = f;
-    listEl.append(li);
-  }
-}
 
 async function openPushModal() {
   if (!syncFolder || !state.activeSiteId) {
@@ -968,21 +1000,22 @@ async function openPushModal() {
   }
 
   pushing = false;
-  pushStatus = null;
-  hide(els.pushProgress);
-  els.pushProgressFill.style.width = '0%';
-  els.pushProgressText.textContent = '';
-  els.pushStart.disabled = true;
-  els.pushStart.textContent = 'Push Changes';
-  els.pushCancel.textContent = 'Cancel';
-  els.pushSummary.textContent = 'Checking for local changes…';
-  hide(els.pushModifiedSection);
-  hide(els.pushNewSection);
-  hide(els.pushDeletedSection);
-  show(els.pushModal);
+  reviewDiffs = [];
+  reviewSelectedPath = null;
+  els.reviewPush.disabled = true;
+  els.reviewPush.textContent = 'Push changes';
+  els.reviewCancel.textContent = 'Cancel';
+  hide(els.reviewProgress);
+  els.reviewProgressFill.style.width = '0%';
+  els.reviewProgressText.textContent = '';
+  els.reviewDiffTitle.textContent = 'Loading changes…';
+  els.reviewDiffBody.replaceChildren();
+  renderReviewFileList(els.reviewFileContainer, [], null, () => {});
+
+  showView('review');
 
   try {
-    pushStatus = await window.aemDesktop.checkPush({
+    const pushStatus = await window.aemDesktop.checkPush({
       siteId: state.activeSiteId,
       destFolder: syncFolder,
     });
@@ -992,43 +1025,55 @@ async function openPushModal() {
       + pushStatus.deleted.length;
 
     if (total === 0) {
-      els.pushSummary.textContent = 'No local changes to push.';
-      els.pushStart.disabled = true;
+      els.reviewDiffTitle.textContent = 'No local changes to push';
+      renderReviewFileList(els.reviewFileContainer, [], null, () => {});
       return;
     }
 
-    const parts = [];
-    if (pushStatus.modified.length > 0) {
-      parts.push(`${pluralFiles(pushStatus.modified.length)} modified`);
-    }
-    if (pushStatus.localNew.length > 0) {
-      parts.push(`${pluralFiles(pushStatus.localNew.length)} new`);
-    }
-    if (pushStatus.deleted.length > 0) {
-      parts.push(`${pluralFiles(pushStatus.deleted.length)} deleted`);
-    }
-    els.pushSummary.textContent = parts.join(', ');
+    reviewDiffs = await window.aemDesktop.getPushDiffs({
+      siteId: state.activeSiteId,
+      destFolder: syncFolder,
+      modified: pushStatus.modified,
+      localNew: pushStatus.localNew,
+      deleted: pushStatus.deleted,
+    });
 
-    if (pushStatus.modified.length > 0) {
-      renderPushFileList(els.pushModifiedList, pushStatus.modified, 'push-modified');
-      show(els.pushModifiedSection);
-    }
-    if (pushStatus.localNew.length > 0) {
-      renderPushFileList(els.pushNewList, pushStatus.localNew, 'push-new');
-      show(els.pushNewSection);
-    }
-    if (pushStatus.deleted.length > 0) {
-      renderPushFileList(els.pushDeletedList, pushStatus.deleted, 'push-deleted');
-      show(els.pushDeletedSection);
-    }
+    els.reviewDiffTitle.textContent = `${pluralFiles(total)} changed`;
+    els.reviewPush.disabled = false;
 
-    els.pushStart.disabled = false;
+    renderReviewFileList(
+      els.reviewFileContainer,
+      reviewDiffs,
+      reviewSelectedPath,
+      selectReviewFile,
+    );
+
+    if (reviewDiffs.length > 0) {
+      selectReviewFile(reviewDiffs[0].daPath);
+    }
   } catch (err) {
-    els.pushSummary.textContent = err.message || 'Failed to check changes';
+    els.reviewDiffTitle.textContent = err.message || 'Failed to load changes';
   }
 }
 
-function closePushModal() {
+function selectReviewFile(daPath) {
+  reviewSelectedPath = daPath;
+  const file = reviewDiffs.find((d) => d.daPath === daPath);
+
+  renderReviewFileList(
+    els.reviewFileContainer,
+    reviewDiffs,
+    reviewSelectedPath,
+    selectReviewFile,
+  );
+
+  if (file) {
+    els.reviewDiffTitle.textContent = file.daPath;
+    renderDiffView(els.reviewDiffBody, file);
+  }
+}
+
+function closeReviewView() {
   if (pushing) {
     window.aemDesktop.cancelPush();
   }
@@ -1037,65 +1082,69 @@ function closePushModal() {
     removePushProgressListener = null;
   }
   pushing = false;
-  hide(els.pushModal);
+  reviewDiffs = [];
+  reviewSelectedPath = null;
+  showView('browse');
+  autoSyncCheck();
 }
 
 function handlePushProgress(data) {
   if (data.phase === 'uploading') {
     const pct = data.total > 0
       ? Math.round((data.completed / data.total) * 100) : 0;
-    els.pushProgressFill.style.width = `${pct}%`;
+    els.reviewProgressFill.style.width = `${pct}%`;
     const current = data.current ? displayPath(data.current) : '';
-    els.pushProgressText.textContent = `Uploading ${data.completed} / ${data.total}  ${current}`;
+    els.reviewProgressText.textContent = `Uploading ${data.completed} / ${data.total}  ${current}`;
   } else if (data.phase === 'deleting') {
     const pct = data.total > 0
       ? Math.round((data.completed / data.total) * 100) : 0;
-    els.pushProgressFill.style.width = `${pct}%`;
+    els.reviewProgressFill.style.width = `${pct}%`;
     const current = data.current ? displayPath(data.current) : '';
-    els.pushProgressText.textContent = `Deleting ${data.completed} / ${data.total}  ${current}`;
+    els.reviewProgressText.textContent = `Deleting ${data.completed} / ${data.total}  ${current}`;
   } else if (data.phase === 'done') {
-    els.pushProgressFill.style.width = '100%';
-    els.pushProgressText.textContent = `Done — ${pluralFiles(data.total)} pushed`;
+    els.reviewProgressFill.style.width = '100%';
+    els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} pushed`;
     pushing = false;
-    els.pushStart.disabled = true;
-    els.pushCancel.textContent = 'Close';
-    autoSyncCheck();
+    els.reviewPush.disabled = true;
+    els.reviewCancel.textContent = 'Done';
   }
 }
 
 async function startPush() {
-  if (!syncFolder || !state.activeSiteId || !pushStatus) {
+  if (!syncFolder || !state.activeSiteId || reviewDiffs.length === 0) {
     return;
   }
 
   pushing = true;
-  els.pushStart.disabled = true;
-  show(els.pushProgress);
-  els.pushProgressText.textContent = 'Starting…';
+  els.reviewPush.disabled = true;
+  show(els.reviewProgress);
+  els.reviewProgressText.textContent = 'Starting…';
 
   removePushProgressListener = window.aemDesktop.onPushProgress(handlePushProgress);
 
+  const filesToPush = reviewDiffs
+    .filter((d) => d.status !== 'deleted')
+    .map((d) => d.daPath);
+  const filesToDelete = reviewDiffs
+    .filter((d) => d.status === 'deleted')
+    .map((d) => d.daPath);
+
   try {
-    const filesToPush = [
-      ...pushStatus.modified,
-      ...pushStatus.localNew,
-    ];
     const result = await window.aemDesktop.runPush({
       siteId: state.activeSiteId,
       destFolder: syncFolder,
       filesToPush,
-      filesToDelete: pushStatus.deleted,
+      filesToDelete,
     });
 
     if (result.cancelled) {
-      els.pushProgressText.textContent = 'Cancelled';
-      els.pushProgressFill.style.width = '0%';
+      els.reviewProgressText.textContent = 'Cancelled';
+      els.reviewProgressFill.style.width = '0%';
     }
   } catch (err) {
-    els.pushProgressText.textContent = err.message || 'Push failed';
+    els.reviewProgressText.textContent = err.message || 'Push failed';
   } finally {
     pushing = false;
-    els.pushCancel.textContent = 'Close';
     if (removePushProgressListener) {
       removePushProgressListener();
       removePushProgressListener = null;
@@ -1119,6 +1168,7 @@ function wireUi() {
 
   els.addSiteForm.addEventListener('submit', handleAddSite);
   els.signInBtn.addEventListener('click', handleSignIn);
+  els.signOutBtn.addEventListener('click', handleSignOut);
 
   window.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
@@ -1153,7 +1203,7 @@ function wireUi() {
           previewFile(item);
         }
       },
-      onExpand: (el) => expandFolder(el.dataset.daPath, { focusFirstChild: true }),
+      onExpand: (el) => expandFolder(el.dataset.daPath),
       onCollapse: (el) => collapseFolder(el.dataset.daPath),
       onFocusMove: (el, keyEvent) => {
         const { daPath } = el.dataset;
@@ -1207,13 +1257,9 @@ function wireUi() {
     }
   });
 
-  els.pushStart.addEventListener('click', startPush);
-  els.pushCancel.addEventListener('click', closePushModal);
-  els.pushModal.addEventListener('click', (event) => {
-    if (event.target === els.pushModal) {
-      closePushModal();
-    }
-  });
+  els.reviewPush.addEventListener('click', startPush);
+  els.reviewCancel.addEventListener('click', closeReviewView);
+  wireReviewKeyboard(els.reviewFileContainer, null, selectReviewFile);
 
   window.addEventListener('dblclick', () => {
     window.aemDesktop.captureScreenshot();

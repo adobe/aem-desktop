@@ -10,6 +10,7 @@
     <title>AEM Desktop</title>
     <link rel="stylesheet" href="s2-tokens.css" />
     <link rel="stylesheet" href="file-tree.css" />
+    <link rel="stylesheet" href="review-view.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -56,7 +57,10 @@
 
         <footer class="home-footer">
           <div id="auth-status" class="auth-status">Checking sign-in…</div>
-          <button type="button" id="sign-in-btn" class="btn primary hidden" hidden>Sign in to DA</button>
+          <div class="home-auth-actions">
+            <button type="button" id="sign-in-btn" class="btn primary hidden" hidden>Sign in to DA</button>
+            <button type="button" id="sign-out-btn" class="btn hidden" hidden>Sign out</button>
+          </div>
         </footer>
       </main>
 
@@ -74,6 +78,33 @@
           </header>
           <div id="content-body" class="content-body">
             <p class="placeholder">Select a file from the folder list.</p>
+          </div>
+        </main>
+      </div>
+
+      <div id="review-view" class="review-view hidden" hidden>
+        <aside class="review-rail">
+          <div class="review-rail-header">
+            <span class="review-rail-title">Changed files</span>
+            <span class="review-rail-spacer"></span>
+            <button type="button" id="review-cancel" class="btn">Cancel</button>
+            <button type="button" id="review-push" class="btn primary" disabled>Push changes</button>
+          </div>
+          <div id="review-file-container" class="review-rail-body"></div>
+          <div id="review-progress" class="review-progress hidden" hidden>
+            <div class="sync-progress-bar">
+              <div id="review-progress-fill" class="sync-progress-fill"></div>
+            </div>
+            <p id="review-progress-text" class="sync-progress-text"></p>
+          </div>
+        </aside>
+
+        <main class="review-content">
+          <header class="review-content-header">
+            <h1 id="review-diff-title">Select a file to see changes</h1>
+          </header>
+          <div id="review-diff-body" class="review-diff-body">
+            <p class="placeholder">Select a file to see changes.</p>
           </div>
         </main>
       </div>
@@ -120,38 +151,6 @@
           <span class="modal-actions-spacer"></span>
           <button type="button" id="sync-start" class="btn primary" disabled>Sync</button>
           <button type="button" id="sync-cancel" class="btn">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="push-modal" class="modal-overlay hidden" hidden>
-      <div class="modal">
-        <h2 class="modal-title">Push Changes to Remote</h2>
-        <div class="modal-body">
-          <p id="push-summary" class="sync-info"></p>
-          <div id="push-modified-section" class="push-section hidden" hidden>
-            <h3 class="push-section-title">Modified</h3>
-            <ul id="push-modified-list" class="push-file-list"></ul>
-          </div>
-          <div id="push-new-section" class="push-section hidden" hidden>
-            <h3 class="push-section-title">New</h3>
-            <ul id="push-new-list" class="push-file-list"></ul>
-          </div>
-          <div id="push-deleted-section" class="push-section hidden" hidden>
-            <h3 class="push-section-title">Deleted</h3>
-            <ul id="push-deleted-list" class="push-file-list"></ul>
-          </div>
-          <div id="push-progress" class="sync-progress hidden" hidden>
-            <div class="sync-progress-bar">
-              <div id="push-progress-fill" class="sync-progress-fill"></div>
-            </div>
-            <p id="push-progress-text" class="sync-progress-text"></p>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <span class="modal-actions-spacer"></span>
-          <button type="button" id="push-start" class="btn primary" disabled>Push Changes</button>
-          <button type="button" id="push-cancel" class="btn">Cancel</button>
         </div>
       </div>
     </div>

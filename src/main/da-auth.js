@@ -10,7 +10,9 @@
  * governing permissions and limitations under the License.
  */
 import http from 'node:http';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import {
+  readFile, writeFile, mkdir, unlink,
+} from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export const IMS_ORIGIN = 'https://ims-na1.adobelogin.com';
@@ -178,4 +180,28 @@ export async function getAuthStatus(tokenPath) {
     authenticated: !isTokenExpired(stored),
     expiresAt: stored.expires_at ?? null,
   };
+}
+
+/**
+ * Removes the persisted DA token.
+ *
+ * @param {string} tokenPath
+ */
+export async function clearStoredToken(tokenPath) {
+  try {
+    await unlink(tokenPath);
+  } catch (err) {
+    if (/** @type {NodeJS.ErrnoException} */ (err).code !== 'ENOENT') {
+      throw err;
+    }
+  }
+}
+
+/**
+ * @param {string} tokenPath
+ * @returns {Promise<{ authenticated: boolean, expiresAt: number|null }>}
+ */
+export async function logout(tokenPath) {
+  await clearStoredToken(tokenPath);
+  return getAuthStatus(tokenPath);
 }

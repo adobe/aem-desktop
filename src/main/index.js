@@ -22,7 +22,7 @@ import { screenshotFilename } from './dev-config.js';
 import { toDaPath } from './aem-page-url.js';
 import { DaClient } from './da-api.js';
 import {
-  DA_TOKEN_FILENAME, getAuthStatus, getValidToken,
+  DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
 } from './da-auth.js';
 import {
   addSiteFromUrl, findSite, loadSites, removeSite, saveSites,
@@ -32,7 +32,7 @@ import { buildPreviewUrl, daPathToPreviewPath } from './preview-url.js';
 import {
   runSync, syncRoot, checkSyncStatus,
   collectFolder, isBinaryExtension,
-  checkPushStatus, runPush,
+  checkPushStatus, runPush, computePushDiffs,
 } from './da-sync.js';
 import log from './logger.js';
 
@@ -154,6 +154,8 @@ ipcMain.handle('da:login', async () => {
   });
   return getAuthStatus(tokenPath());
 });
+
+ipcMain.handle('da:logout', async () => logout(tokenPath()));
 
 ipcMain.handle('da:list', async (_event, { siteId, daPath = '/' }) => {
   const sites = await ensureSitesLoaded();
@@ -374,6 +376,25 @@ ipcMain.handle('push:cancel', () => {
     pushAbortController.abort();
     pushAbortController = null;
   }
+});
+
+ipcMain.handle('push:diffs', async (_event, {
+  siteId, destFolder, modified, localNew, deleted,
+}) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  return computePushDiffs({
+    destRoot: destFolder,
+    org: site.org,
+    repo: site.repo,
+    modified,
+    localNew,
+    deleted,
+  });
 });
 
 // Development convenience: double-clicking anywhere in the UI captures a

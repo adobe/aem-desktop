@@ -12,8 +12,12 @@
 import {
   mkdir, readdir, readFile, stat, writeFile, utimes, copyFile,
 } from 'node:fs/promises';
-import { join, dirname, relative } from 'node:path';
+import {
+  join, dirname, relative, extname,
+} from 'node:path';
 import { toDaPath } from './aem-page-url.js';
+import { prettyPrintHtml } from './pretty-print.js';
+import { myersDiff, buildHunks } from './diff.js';
 
 const TEXT_EXTENSIONS = new Set([
   'html', 'htm', 'json', 'css', 'js', 'mjs', 'xml', 'txt', 'md',
@@ -662,4 +666,97 @@ export async function runPush({
   });
 
   return { uploaded: filesToPush.length, deleted: filesToDelete.length };
+}
+
+const HTML_EXTS = new Set(['html', 'htm']);
+
+/**
+ * Pretty-prints file content if it is HTML; otherwise returns as-is.
+ * @param {string} content
+ * @param {string} daPath
+ * @returns {string}
+ */
+function prettify(content, daPath) {
+  const ext = extname(daPath).slice(1).toLowerCase();
+  if (HTML_EXTS.has(ext)) {
+    return prettyPrintHtml(content);
+  }
+  if (ext === 'json') {
+    try {
+      return JSON.stringify(JSON.parse(content), null, 2);
+    } catch {
+      return content;
+    }
+  }
+  return content;
+}
+
+/**
+ * Computes diffs for all pushable changes.
+ *
+ * @param {{
+ *   destRoot: string,
+ *   org: string,
+ *   repo: string,
+ *   modified: string[],
+ *   localNew: string[],
+ *   deleted: string[],
+ * }} options
+ * @returns {Promise<Array<{
+ *   daPath: string,
+ *   status: string,
+ *   additions: number,
+ *   deletions: number,
+ *   hunks: Array,
+ * }>>}
+ */
+export async function computePushDiffs({
+  destRoot, org, repo, modified, localNew, deleted,
+}) {
+  const results = [];
+
+  for (const daPath of modified) {
+    const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
+    const origRaw = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+    const workRaw = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
+    const origText = prettify(origRaw ? origRaw.toString('utf8') : '', daPath);
+    const workText = prettify(workRaw ? workRaw.toString('utf8') : '', daPath);
+    const oldLines = origText.split('\n');
+    const newLines = workText.split('\n');
+    const edits = myersDiff(oldLines, newLines);
+    const hunks = buildHunks(edits);
+    const additions = edits.filter((e) => e.type === 'insert').length;
+    const deletions = edits.filter((e) => e.type === 'delete').length;
+    results.push({
+      daPath, status: 'modified', additions, deletions, hunks,
+    });
+  }
+
+  for (const daPath of localNew) {
+    const root = syncRoot(destRoot, org, repo);
+    const segs = daPath.split('/').filter(Boolean);
+    const filePath = join(root, ...segs);
+    const raw = await safeReadFile(filePath); // eslint-disable-line no-await-in-loop
+    const text = prettify(raw ? raw.toString('utf8') : '', daPath);
+    const newLines = text.split('\n');
+    const edits = myersDiff([], newLines);
+    const hunks = buildHunks(edits);
+    results.push({
+      daPath, status: 'new', additions: newLines.length, deletions: 0, hunks,
+    });
+  }
+
+  for (const daPath of deleted) {
+    const { originalPath } = syncPaths(destRoot, org, repo, daPath);
+    const raw = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+    const text = prettify(raw ? raw.toString('utf8') : '', daPath);
+    const oldLines = text.split('\n');
+    const edits = myersDiff(oldLines, []);
+    const hunks = buildHunks(edits);
+    results.push({
+      daPath, status: 'deleted', additions: 0, deletions: oldLines.length, hunks,
+    });
+  }
+
+  return results;
 }

@@ -100,7 +100,7 @@ function renderPanelHeader(selectionCount, options) {
     const pullBtn = document.createElement('button');
     pullBtn.type = 'button';
     pullBtn.className = 'btn-tree-action';
-    pullBtn.textContent = 'Pull';
+    pullBtn.textContent = 'Sync locally';
     pullBtn.disabled = selectionCount === 0;
     pullBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -113,7 +113,7 @@ function renderPanelHeader(selectionCount, options) {
     const pushBtn = document.createElement('button');
     pushBtn.type = 'button';
     pushBtn.className = `btn-tree-action${hasPushChanges ? ' has-changes' : ''}`;
-    pushBtn.textContent = 'Push';
+    pushBtn.textContent = 'Review changes…';
     pushBtn.disabled = !hasPushChanges;
     pushBtn.addEventListener('click', (e) => {
       e.stopPropagation();
