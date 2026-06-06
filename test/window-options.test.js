@@ -23,6 +23,7 @@ test('createWindowOptions enforces secure renderer defaults', () => {
   assert.equal(webPreferences.contextIsolation, true);
   assert.equal(webPreferences.nodeIntegration, false);
   assert.equal(webPreferences.sandbox, true);
+  assert.equal(webPreferences.webviewTag, true);
 });
 
 test('createWindowOptions defers paint until ready-to-show', () => {
