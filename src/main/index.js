@@ -27,6 +27,7 @@ import {
 import {
   addSiteFromUrl, findSite, loadSites, removeSite, saveSites,
 } from './site-store.js';
+import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
 import { formatContentForDisplay } from './content-format.js';
 import { buildPreviewUrl, daPathToPreviewPath } from './preview-url.js';
 import {
@@ -47,6 +48,7 @@ const rendererDir = join(here, '..', 'renderer');
 const preloadPath = join(here, '..', 'preload', 'index.cjs');
 
 const SITES_FILENAME = 'sites.json';
+const SYNC_FOLDER_FILENAME = 'sync-folder.json';
 
 let mainWindow;
 let sitesCache = [];
@@ -61,6 +63,10 @@ function tokenPath() {
 
 function sitesPath() {
   return userDataPath(SITES_FILENAME);
+}
+
+function syncFolderStorePath() {
+  return userDataPath(SYNC_FOLDER_FILENAME);
 }
 
 async function ensureSitesLoaded() {
@@ -205,6 +211,13 @@ ipcMain.handle('da:get-source', async (_event, { siteId, daPath }) => {
 
 let syncAbortController = null;
 
+ipcMain.handle('sync:get-folder', async () => loadSyncFolder(syncFolderStorePath()));
+
+ipcMain.handle('sync:set-folder', async (_event, { destFolder }) => {
+  await saveSyncFolder(syncFolderStorePath(), destFolder || null);
+  return destFolder || null;
+});
+
 ipcMain.handle('sync:pick-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory', 'createDirectory'],
@@ -214,7 +227,9 @@ ipcMain.handle('sync:pick-folder', async () => {
   if (result.canceled || !result.filePaths.length) {
     return null;
   }
-  return result.filePaths[0];
+  const folder = result.filePaths[0];
+  await saveSyncFolder(syncFolderStorePath(), folder);
+  return folder;
 });
 
 ipcMain.handle('sync:check', async (_event, {

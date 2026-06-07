@@ -659,7 +659,7 @@ async function handleSignIn() {
   }
 }
 
-let syncFolder = localStorage.getItem('syncFolder') || null;
+let syncFolder = null;
 let syncing = false;
 let syncedPath = null;
 let syncConflicts = [];
@@ -983,7 +983,6 @@ async function pickSyncFolder() {
   const folder = await window.aemDesktop.pickSyncFolder();
   if (folder) {
     syncFolder = folder;
-    localStorage.setItem('syncFolder', folder);
     updateSyncFolderDisplay();
     runSyncCheck();
   }
@@ -1542,9 +1541,27 @@ function wireUi() {
   });
 }
 
+async function loadSyncFolderPreference() {
+  syncFolder = await window.aemDesktop.getSyncFolder();
+  if (!syncFolder) {
+    try {
+      const legacy = localStorage.getItem('syncFolder');
+      if (legacy) {
+        syncFolder = legacy;
+        await window.aemDesktop.setSyncFolder(legacy);
+        localStorage.removeItem('syncFolder');
+      }
+    } catch {
+      /* localStorage unavailable */
+    }
+  }
+  updateSyncFolderDisplay();
+}
+
 async function init() {
   wireUi();
   state.icons = await loadIcons();
+  await loadSyncFolderPreference();
   await refreshAuthStatus();
   await loadSites();
   showView('home');

@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
 
   pickSyncFolder: () => ipcRenderer.invoke('sync:pick-folder'),
+  getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),
+  setSyncFolder: (destFolder) => ipcRenderer.invoke('sync:set-folder', { destFolder }),
   checkSync: (options) => ipcRenderer.invoke('sync:check', options),
   runSync: (options) => ipcRenderer.invoke('sync:run', options),
   cancelSync: () => ipcRenderer.invoke('sync:cancel'),
