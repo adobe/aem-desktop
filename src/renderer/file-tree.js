@@ -62,7 +62,7 @@ export function renderFileTree(container, options) {
   const tree = document.createElement('ul');
   tree.className = 'tree';
   tree.setAttribute('role', 'tree');
-  tree.setAttribute('aria-label', 'Files');
+  tree.setAttribute('aria-label', 'Content');
   renderFolderChildren(tree, '/', 0, options);
   container.append(tree);
 }
@@ -81,7 +81,7 @@ function renderPanelHeader(selectionCount, options) {
 
   const title = document.createElement('span');
   title.className = 'file-tree-title';
-  title.textContent = 'Files';
+  title.textContent = 'Content';
   header.append(title);
 
   if (selectionCount > 0) {
@@ -93,33 +93,40 @@ function renderPanelHeader(selectionCount, options) {
   }
 
   const spacer = document.createElement('span');
-  spacer.style.flex = '1';
+  spacer.className = 'rail-header-spacer';
   header.append(spacer);
+
+  const actions = document.createElement('div');
+  actions.className = 'rail-header-actions';
 
   if (onPull) {
     const pullBtn = document.createElement('button');
     pullBtn.type = 'button';
-    pullBtn.className = 'btn-tree-action';
-    pullBtn.textContent = 'Sync locally';
+    pullBtn.className = 's2-btn';
+    pullBtn.textContent = 'Sync selected…';
     pullBtn.disabled = selectionCount === 0;
     pullBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       onPull();
     });
-    header.append(pullBtn);
+    actions.append(pullBtn);
   }
 
   if (onPush) {
     const pushBtn = document.createElement('button');
     pushBtn.type = 'button';
-    pushBtn.className = `btn-tree-action${hasPushChanges ? ' has-changes' : ''}`;
+    pushBtn.className = `s2-btn${hasPushChanges ? ' s2-btn-accent' : ''}`;
     pushBtn.textContent = 'Review changes…';
     pushBtn.disabled = !hasPushChanges;
     pushBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       onPush();
     });
-    header.append(pushBtn);
+    actions.append(pushBtn);
+  }
+
+  if (actions.childElementCount > 0) {
+    header.append(actions);
   }
 
   return header;

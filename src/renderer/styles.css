@@ -394,33 +394,6 @@ body {
   background: var(--panel-bg);
 }
 
-.content-header {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid var(--rail-border);
-}
-
-.content-header h1 {
-  font-size: 0.95rem;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.content-mode {
-  flex-shrink: 0;
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  border: 1px solid var(--rail-border);
-  border-radius: 3px;
-  padding: 0.1rem 0.35rem;
-}
-
 .content-body {
   flex: 1;
   overflow: auto;
@@ -504,6 +477,49 @@ body {
 .sync-info {
   font-size: 0.82rem;
   color: var(--muted);
+}
+
+.sync-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sync-selection-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sync-path-list {
+  list-style: none;
+  margin: 0;
+  max-height: 8rem;
+  overflow-y: auto;
+  border: 1px solid var(--rail-border);
+  border-radius: 6px;
+  background: var(--s2-gray-50);
+}
+
+.sync-path-list li {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.82rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 0 var(--rail-border);
+}
+
+.sync-path-list li:last-child {
+  box-shadow: none;
+}
+
+#sync-modified-warning .sync-path-list {
+  margin-top: 0.35rem;
+  margin-bottom: 0.15rem;
 }
 
 .sync-folder-row {

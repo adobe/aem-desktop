@@ -18,14 +18,46 @@ function badgeClass(status) {
 }
 
 /**
+ * Toggles check state for a set of paths — checks all when any is unchecked,
+ * unchecks all when every path is already checked.
+ *
+ * @param {Set<string>} checkedPaths
+ * @param {string[]} paths
+ * @returns {Set<string>}
+ */
+export function togglePathsCheckState(checkedPaths, paths) {
+  const next = new Set(checkedPaths);
+  const allChecked = paths.length > 0 && paths.every((p) => next.has(p));
+  for (const p of paths) {
+    if (allChecked) {
+      next.delete(p);
+    } else {
+      next.add(p);
+    }
+  }
+  return next;
+}
+
+/**
  * Renders the file list in the review rail.
  *
  * @param {HTMLElement} container
  * @param {Array<{daPath: string, status: string, additions: number, deletions: number}>} files
- * @param {string|null} selectedPath
- * @param {(daPath: string) => void} onSelect
+ * @param {Set<string>} selectedPaths
+ * @param {string|null} focusPath
+ * @param {Set<string>} checkedPaths
+ * @param {(daPath: string, modifiers: { metaKey: boolean, shiftKey: boolean }) => void} onRowClick
+ * @param {(daPath: string, checked: boolean) => void} onToggleCheck
  */
-export function renderReviewFileList(container, files, selectedPath, onSelect) {
+export function renderReviewFileList(
+  container,
+  files,
+  selectedPaths,
+  focusPath,
+  checkedPaths,
+  onRowClick,
+  onToggleCheck,
+) {
   container.replaceChildren();
 
   if (files.length === 0) {
@@ -39,19 +71,36 @@ export function renderReviewFileList(container, files, selectedPath, onSelect) {
   const list = document.createElement('ul');
   list.className = 'review-file-list';
   list.setAttribute('role', 'listbox');
-  list.setAttribute('aria-label', 'Changed files');
+  list.setAttribute('aria-label', 'Changes');
   list.tabIndex = 0;
+  if (focusPath) {
+    list.dataset.focusPath = focusPath;
+  } else {
+    delete list.dataset.focusPath;
+  }
 
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
-    const isSelected = file.daPath === selectedPath;
+    const isSelected = selectedPaths.has(file.daPath);
+    const isChecked = checkedPaths.has(file.daPath);
     const li = document.createElement('li');
     li.className = `review-file-row${isSelected ? ' is-selected' : ''}`;
     li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(isSelected));
     li.dataset.daPath = file.daPath;
     li.dataset.index = String(i);
-    li.addEventListener('click', () => onSelect(file.daPath));
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'review-file-checkbox';
+    checkbox.checked = isChecked;
+    checkbox.setAttribute('aria-label', `Include ${displayPath(file.daPath)} in push`);
+    checkbox.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+    checkbox.addEventListener('change', () => {
+      onToggleCheck(file.daPath, checkbox.checked);
+    });
 
     const pathSpan = document.createElement('span');
     pathSpan.className = 'review-file-path';
@@ -81,15 +130,27 @@ export function renderReviewFileList(container, files, selectedPath, onSelect) {
     }
 
     meta.append(stats, badge);
-    li.append(pathSpan, meta);
+    li.append(checkbox, pathSpan, meta);
+    li.addEventListener('click', (event) => {
+      if (event.target.closest('.review-file-checkbox')) {
+        return;
+      }
+      onRowClick(file.daPath, {
+        metaKey: event.metaKey || event.ctrlKey,
+        shiftKey: event.shiftKey,
+      });
+    });
     list.append(li);
   }
 
   container.append(list);
 
-  if (selectedPath) {
+  if (focusPath) {
     list.focus({ preventScroll: true });
-    const sel = list.querySelector('[aria-selected="true"]');
+    const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? CSS.escape(focusPath)
+      : focusPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const sel = list.querySelector(`[data-da-path="${escaped}"]`);
     if (sel) {
       sel.scrollIntoView({ block: 'nearest' });
     }
@@ -101,10 +162,12 @@ export function renderReviewFileList(container, files, selectedPath, onSelect) {
  * Call once — the listener lives on the stable container element.
  *
  * @param {HTMLElement} container
- * @param {Array<{daPath: string}>} filesRef  — mutable ref; update `.files`
- * @param {(daPath: string) => void} onSelect
+ * @param {{ onSelect: (daPath: string) => void,
+ *           onSelectAll: () => void,
+ *           onToggleCheckSelection: () => void }} handlers
  */
-export function wireReviewKeyboard(container, filesRef, onSelect) {
+export function wireReviewKeyboard(container, handlers) {
+  const { onSelect, onSelectAll, onToggleCheckSelection } = handlers;
   container.addEventListener('keydown', (event) => {
     const list = container.querySelector('[role="listbox"]');
     if (!list) {
@@ -114,10 +177,30 @@ export function wireReviewKeyboard(container, filesRef, onSelect) {
     if (rows.length === 0) {
       return;
     }
-    const currentIdx = rows.findIndex(
+
+    if ((event.metaKey || event.ctrlKey) && event.key === 'a') {
+      event.preventDefault();
+      onSelectAll();
+      return;
+    }
+
+    const selectedRows = rows.filter(
       (r) => r.getAttribute('aria-selected') === 'true',
     );
-    let nextIdx = currentIdx;
+    const { focusPath } = list.dataset;
+    let currentIdx = -1;
+    if (focusPath) {
+      currentIdx = rows.findIndex((r) => r.dataset.daPath === focusPath);
+    } else if (selectedRows.length > 0) {
+      currentIdx = rows.indexOf(selectedRows[selectedRows.length - 1]);
+    }
+    let nextIdx = currentIdx >= 0 ? currentIdx : 0;
+
+    if (event.key === ' ' || event.code === 'Space') {
+      event.preventDefault();
+      onToggleCheckSelection();
+      return;
+    }
 
     if (event.key === 'ArrowDown' || event.key === 'j') {
       event.preventDefault();

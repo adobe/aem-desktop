@@ -134,6 +134,18 @@
   --s2-spacing-500: 32px;
   --s2-spacing-600: 40px;
   --s2-spacing-700: 48px;
+
+  --rail-row-height: var(--s2-spacing-700);
+  --rail-header-bg: var(--s2-gray-75);
+  --rail-row-bg: var(--s2-gray-25);
+
+  /* S2 size-S button (da-nx browse toolbar / action-button size s) */
+  --s2-button-s-height: 24px;
+  --s2-button-s-padding-x: var(--s2-spacing-100);
+  --s2-button-s-font-size: var(--s2-component-s-medium-font-size);
+  --s2-button-s-line-height: var(--s2-component-s-medium-line-height);
+  --s2-button-s-font-weight: var(--s2-component-s-medium-font-weight);
+  --s2-button-s-radius: var(--s2-corner-radius-100);
   --s2-spacing-800: 64px;
   --s2-spacing-900: 80px;
   --s2-spacing-1000: 96px;

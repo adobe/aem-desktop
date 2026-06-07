@@ -28,6 +28,7 @@ import {
 } from './tree-nav.js';
 import {
   renderReviewFileList, renderDiffView, wireReviewKeyboard,
+  togglePathsCheckState,
 } from './review-view.js';
 
 const state = {
@@ -68,8 +69,6 @@ const els = {
   authStatus: document.getElementById('auth-status'),
   signInBtn: document.getElementById('sign-in-btn'),
   signOutBtn: document.getElementById('sign-out-btn'),
-  contentTitle: document.getElementById('content-title'),
-  contentMode: document.getElementById('content-mode'),
   contentBody: document.getElementById('content-body'),
   syncModal: document.getElementById('sync-modal'),
   syncPickFolder: document.getElementById('sync-pick-folder'),
@@ -77,7 +76,8 @@ const els = {
   syncIncludeBinaries: document.getElementById('sync-include-binaries'),
   syncStart: document.getElementById('sync-start'),
   syncCancel: document.getElementById('sync-cancel'),
-  syncSelectionInfo: document.getElementById('sync-selection-info'),
+  syncSelectionList: document.getElementById('sync-selection-list'),
+  syncSelectionSummary: document.getElementById('sync-selection-summary'),
   syncProgress: document.getElementById('sync-progress'),
   syncProgressFill: document.getElementById('sync-progress-fill'),
   syncProgressText: document.getElementById('sync-progress-text'),
@@ -89,12 +89,14 @@ const els = {
   syncDeletedLocallyText: document.getElementById('sync-deleted-locally-text'),
   syncLocalOnly: document.getElementById('sync-local-only'),
   syncLocalOnlyText: document.getElementById('sync-local-only-text'),
+  syncModifiedWarning: document.getElementById('sync-modified-warning'),
+  syncModifiedList: document.getElementById('sync-modified-list'),
+  syncOverwriteModified: document.getElementById('sync-overwrite-modified'),
   syncConflictWarning: document.getElementById('sync-conflict-warning'),
   syncConflictText: document.getElementById('sync-conflict-text'),
   syncOverwriteConflicts: document.getElementById('sync-overwrite-conflicts'),
   reviewView: document.getElementById('review-view'),
   reviewFileContainer: document.getElementById('review-file-container'),
-  reviewDiffTitle: document.getElementById('review-diff-title'),
   reviewDiffBody: document.getElementById('review-diff-body'),
   reviewCancel: document.getElementById('review-cancel'),
   reviewPush: document.getElementById('review-push'),
@@ -263,8 +265,6 @@ function destroyPreviewWebview() {
 }
 
 function renderContentPlaceholder(message) {
-  els.contentTitle.textContent = 'Select a file';
-  els.contentMode.textContent = '';
   els.contentBody.classList.remove('is-preview');
   destroyPreviewWebview();
   els.contentBody.replaceChildren();
@@ -312,11 +312,7 @@ function ensurePreviewWebview(previewUrlOrigin) {
   return webview;
 }
 
-function showPreview({
-  daPath, url, previewPath, previewUrlOrigin,
-}) {
-  els.contentTitle.textContent = displayPath(daPath);
-  els.contentMode.textContent = previewPath;
+function showPreview({ url, previewUrlOrigin }) {
   els.contentBody.classList.add('is-preview');
 
   const webview = ensurePreviewWebview(previewUrlOrigin);
@@ -669,7 +665,51 @@ let syncedPath = null;
 let syncConflicts = [];
 let syncUnchanged = [];
 let syncModified = [];
+let syncTotalFiles = 0;
+let syncRequiresModifiedAck = false;
+let syncRequiresConflictAck = false;
 let removeSyncProgressListener = null;
+
+function renderSyncPathList(listEl, paths) {
+  listEl.replaceChildren();
+  const sorted = [...paths].sort((a, b) => a.localeCompare(b));
+  for (const daPath of sorted) {
+    const li = document.createElement('li');
+    li.textContent = displayPath(daPath);
+    li.title = daPath;
+    listEl.append(li);
+  }
+}
+
+function renderSyncSelectionList() {
+  const items = getSelectedItems();
+  els.syncSelectionList.replaceChildren();
+  const sorted = [...items].sort((a, b) => a.daPath.localeCompare(b.daPath));
+  for (const item of sorted) {
+    const li = document.createElement('li');
+    li.textContent = item.isFolder
+      ? `${displayPath(item.daPath)}/`
+      : displayPath(item.daPath);
+    li.title = item.daPath;
+    els.syncSelectionList.append(li);
+  }
+}
+
+function updateSyncStartEnabled() {
+  if (syncing || !syncFolder || syncTotalFiles === 0) {
+    els.syncStart.disabled = true;
+    return;
+  }
+  if (syncRequiresModifiedAck && !els.syncOverwriteModified.checked) {
+    els.syncStart.disabled = true;
+    return;
+  }
+  if (syncRequiresConflictAck && !els.syncOverwriteConflicts.checked) {
+    els.syncStart.disabled = true;
+    return;
+  }
+  els.syncStart.disabled = false;
+}
 
 function getSelectedItems() {
   const items = [];
@@ -702,8 +742,15 @@ function resetSyncModalState() {
   hide(els.syncLocalNew);
   hide(els.syncDeletedLocally);
   hide(els.syncLocalOnly);
+  hide(els.syncModifiedWarning);
   hide(els.syncConflictWarning);
+  els.syncOverwriteModified.checked = false;
   els.syncOverwriteConflicts.checked = false;
+  syncTotalFiles = 0;
+  syncRequiresModifiedAck = false;
+  syncRequiresConflictAck = false;
+  els.syncSelectionSummary.textContent = '';
+  els.syncModifiedList.replaceChildren();
   els.syncProgressFill.style.width = '0%';
   els.syncProgressText.textContent = '';
   els.syncStart.textContent = 'Sync';
@@ -771,9 +818,23 @@ function renderSyncStatus(status) {
   if (status.conflictCount > 0) {
     els.syncConflictText.textContent = `${pluralFiles(status.conflictCount)} changed both locally and remotely — will be skipped unless you choose to overwrite.`;
     show(els.syncConflictWarning);
+    syncRequiresConflictAck = true;
   } else {
     hide(els.syncConflictWarning);
+    syncRequiresConflictAck = false;
   }
+
+  if (status.modifiedCount > 0) {
+    renderSyncPathList(els.syncModifiedList, status.modified || []);
+    show(els.syncModifiedWarning);
+    syncRequiresModifiedAck = true;
+  } else {
+    hide(els.syncModifiedWarning);
+    els.syncModifiedList.replaceChildren();
+    syncRequiresModifiedAck = false;
+  }
+
+  updateSyncStartEnabled();
 }
 
 function buildSyncBadges(status) {
@@ -796,6 +857,9 @@ function buildSyncBadges(status) {
   }
   for (const p of (status.deletedLocally || [])) {
     badges.set(p, 'deleted');
+  }
+  for (const p of (status.syncedFolders || [])) {
+    badges.set(p, 'synced');
   }
   state.tree.syncBadges = badges;
   paintFileTree();
@@ -836,13 +900,17 @@ function injectLocalFilesForFolder(folderPath) {
 
 async function runSyncCheck() {
   if (!syncFolder || !state.activeSiteId) {
-    els.syncStart.disabled = true;
+    syncTotalFiles = 0;
+    syncRequiresModifiedAck = false;
+    syncRequiresConflictAck = false;
+    updateSyncStartEnabled();
     hide(els.syncStatus);
+    hide(els.syncModifiedWarning);
     hide(els.syncConflictWarning);
     return;
   }
 
-  els.syncSelectionInfo.textContent = 'Checking…';
+  els.syncSelectionSummary.textContent = 'Checking…';
   els.syncStart.disabled = true;
 
   try {
@@ -857,16 +925,23 @@ async function runSyncCheck() {
     syncConflicts = status.conflicts || [];
     syncUnchanged = status.unchanged || [];
     syncModified = status.modified || [];
-    buildSyncBadges(status);
-    els.syncSelectionInfo.textContent = `${pluralFiles(status.totalFiles)} to sync`;
+    syncTotalFiles = status.totalFiles;
+    els.syncOverwriteModified.checked = false;
+    els.syncOverwriteConflicts.checked = false;
+    els.syncSelectionSummary.textContent = `${pluralFiles(status.totalFiles)} to sync`;
     renderSyncStatus(status);
-    els.syncStart.disabled = status.totalFiles === 0;
+    updateSyncStartEnabled();
   } catch (err) {
-    els.syncSelectionInfo.textContent = err.message || 'Check failed';
+    syncTotalFiles = 0;
+    syncRequiresModifiedAck = false;
+    syncRequiresConflictAck = false;
+    els.syncSelectionSummary.textContent = err.message || 'Check failed';
     hide(els.syncStatus);
     hide(els.syncDeletedLocally);
     hide(els.syncLocalOnly);
+    hide(els.syncModifiedWarning);
     hide(els.syncConflictWarning);
+    updateSyncStartEnabled();
   }
 }
 
@@ -876,14 +951,16 @@ function openSyncModal() {
     return;
   }
   resetSyncModalState();
-  els.syncSelectionInfo.textContent = `${count} item${count === 1 ? '' : 's'} selected`;
+  renderSyncSelectionList();
+  els.syncSelectionSummary.textContent = '';
   updateSyncFolderDisplay();
   show(els.syncModal);
 
   if (syncFolder) {
     runSyncCheck();
   } else {
-    els.syncStart.disabled = true;
+    syncTotalFiles = 0;
+    updateSyncStartEnabled();
   }
 }
 
@@ -897,6 +974,9 @@ function closeSyncModal() {
   }
   syncing = false;
   hide(els.syncModal);
+  if (syncFolder && state.activeSiteId) {
+    autoSyncCheck();
+  }
 }
 
 async function pickSyncFolder() {
@@ -943,17 +1023,19 @@ async function startSync() {
   hide(els.syncLocalNew);
   hide(els.syncDeletedLocally);
   hide(els.syncLocalOnly);
+  hide(els.syncModifiedWarning);
   hide(els.syncConflictWarning);
   show(els.syncProgress);
   els.syncProgressText.textContent = 'Starting…';
 
   removeSyncProgressListener = window.aemDesktop.onSyncProgress(handleSyncProgress);
 
-  const overwrite = els.syncOverwriteConflicts.checked;
+  const overwriteConflicts = els.syncOverwriteConflicts.checked;
+  const overwriteModified = els.syncOverwriteModified.checked;
   const skips = [
     ...syncUnchanged,
-    ...syncModified,
-    ...(!overwrite ? syncConflicts : []),
+    ...(!overwriteModified ? syncModified : []),
+    ...(!overwriteConflicts ? syncConflicts : []),
   ];
   const skipConflicts = skips.length > 0 ? skips : undefined;
 
@@ -970,6 +1052,7 @@ async function startSync() {
     if (result.cancelled) {
       els.syncProgressText.textContent = 'Cancelled';
       els.syncProgressFill.style.width = '0%';
+      autoSyncCheck();
     } else {
       if (result.syncedPath) {
         syncedPath = result.syncedPath;
@@ -991,8 +1074,212 @@ async function startSync() {
 
 let pushing = false;
 let reviewDiffs = [];
-let reviewSelectedPath = null;
+/** @type {Set<string>} */
+let reviewSelectedPaths = new Set();
+let reviewAnchorPath = null;
+let reviewFocusPath = null;
+/** @type {Set<string>} */
+let reviewCheckedPaths = new Set();
 let removePushProgressListener = null;
+
+function reviewVisiblePaths() {
+  return reviewDiffs.map((d) => d.daPath);
+}
+
+function paintReviewFileList() {
+  renderReviewFileList(
+    els.reviewFileContainer,
+    reviewDiffs,
+    reviewSelectedPaths,
+    reviewFocusPath,
+    reviewCheckedPaths,
+    handleReviewRowClick,
+    toggleReviewCheck,
+  );
+}
+
+function showReviewDiff(daPath) {
+  const file = reviewDiffs.find((d) => d.daPath === daPath);
+  if (file) {
+    renderDiffView(els.reviewDiffBody, file);
+  }
+}
+
+function focusReviewFile(daPath) {
+  reviewSelectedPaths = new Set([daPath]);
+  reviewAnchorPath = daPath;
+  reviewFocusPath = daPath;
+  paintReviewFileList();
+  showReviewDiff(daPath);
+}
+
+function handleReviewRowClick(daPath, { metaKey, shiftKey }) {
+  const { selectedPaths, anchorPath } = applyFinderClick({
+    visiblePaths: reviewVisiblePaths(),
+    selectedPaths: reviewSelectedPaths,
+    anchorPath: reviewAnchorPath,
+    daPath,
+    metaKey,
+    shiftKey,
+  });
+  reviewSelectedPaths = selectedPaths;
+  reviewAnchorPath = anchorPath;
+  reviewFocusPath = daPath;
+  paintReviewFileList();
+  if (reviewSelectedPaths.size === 1) {
+    showReviewDiff(daPath);
+  }
+}
+
+function selectAllReviewFiles() {
+  reviewSelectedPaths = selectAllPaths(reviewVisiblePaths());
+  if (reviewSelectedPaths.size > 0) {
+    reviewFocusPath = reviewFocusPath || reviewDiffs[0].daPath;
+    reviewAnchorPath = reviewFocusPath;
+  }
+  paintReviewFileList();
+}
+
+function toggleReviewCheckSelection() {
+  let targets = [];
+  if (reviewSelectedPaths.size > 0) {
+    targets = [...reviewSelectedPaths];
+  } else if (reviewFocusPath) {
+    targets = [reviewFocusPath];
+  }
+  if (targets.length === 0) {
+    return;
+  }
+  reviewCheckedPaths = togglePathsCheckState(reviewCheckedPaths, targets);
+  paintReviewFileList();
+  updateReviewPushButton();
+}
+
+function toggleReviewCheck(daPath, checked) {
+  if (checked) {
+    reviewCheckedPaths.add(daPath);
+  } else {
+    reviewCheckedPaths.delete(daPath);
+  }
+  paintReviewFileList();
+  updateReviewPushButton();
+}
+
+function checkedReviewDiffs() {
+  return reviewDiffs.filter((d) => reviewCheckedPaths.has(d.daPath));
+}
+
+function updateReviewPushButton({ forceDisabled = false } = {}) {
+  const count = checkedReviewDiffs().length;
+  els.reviewPush.disabled = forceDisabled || pushing || count === 0;
+  els.reviewPush.textContent = count > 0 && !forceDisabled
+    ? `Push changes (${count})`
+    : 'Push changes';
+}
+
+function renderReviewPlaceholder(message) {
+  els.reviewDiffBody.replaceChildren();
+  const p = document.createElement('p');
+  p.className = 'placeholder';
+  p.textContent = message;
+  els.reviewDiffBody.append(p);
+}
+
+async function loadReviewChanges() {
+  const pushStatus = await window.aemDesktop.checkPush({
+    siteId: state.activeSiteId,
+    destFolder: syncFolder,
+  });
+
+  const total = pushStatus.modified.length
+    + pushStatus.localNew.length
+    + pushStatus.deleted.length;
+
+  state.tree.hasPushChanges = total > 0;
+
+  if (total === 0) {
+    return { empty: true, diffs: [] };
+  }
+
+  const diffs = await window.aemDesktop.getPushDiffs({
+    siteId: state.activeSiteId,
+    destFolder: syncFolder,
+    modified: pushStatus.modified,
+    localNew: pushStatus.localNew,
+    deleted: pushStatus.deleted,
+  });
+
+  return { empty: false, diffs };
+}
+
+function applyReviewDiffs(diffs, { preserveSelection = false } = {}) {
+  reviewDiffs = diffs;
+  const paths = new Set(reviewDiffs.map((d) => d.daPath));
+
+  if (preserveSelection) {
+    reviewCheckedPaths = new Set(
+      [...reviewCheckedPaths].filter((p) => paths.has(p)),
+    );
+    reviewSelectedPaths = new Set(
+      [...reviewSelectedPaths].filter((p) => paths.has(p)),
+    );
+    if (reviewSelectedPaths.size === 0 && reviewDiffs.length > 0) {
+      reviewSelectedPaths = new Set([reviewDiffs[0].daPath]);
+    }
+    const nextFocus = paths.has(reviewFocusPath)
+      ? reviewFocusPath
+      : (reviewDiffs[0]?.daPath ?? null);
+    reviewFocusPath = nextFocus;
+    reviewAnchorPath = nextFocus;
+  } else {
+    reviewCheckedPaths = new Set(reviewDiffs.map((d) => d.daPath));
+    const first = reviewDiffs[0]?.daPath ?? null;
+    reviewSelectedPaths = first ? new Set([first]) : new Set();
+    reviewFocusPath = first;
+    reviewAnchorPath = first;
+  }
+
+  updateReviewPushButton();
+  paintReviewFileList();
+  if (reviewFocusPath) {
+    showReviewDiff(reviewFocusPath);
+  } else {
+    renderReviewPlaceholder('Select a file to see changes.');
+  }
+}
+
+function resetReviewProgressUi() {
+  hide(els.reviewProgress);
+  els.reviewProgressFill.style.width = '0%';
+  els.reviewProgressText.textContent = '';
+  els.reviewCancel.textContent = 'Cancel';
+  pushing = false;
+}
+
+async function refreshReviewChanges() {
+  if (!syncFolder || !state.activeSiteId) {
+    return;
+  }
+
+  try {
+    const { empty, diffs } = await loadReviewChanges();
+    paintFileTree();
+
+    if (empty) {
+      pushing = false;
+      closeReviewView();
+      return;
+    }
+
+    resetReviewProgressUi();
+    applyReviewDiffs(diffs, { preserveSelection: true });
+    autoSyncCheck();
+  } catch (err) {
+    renderReviewPlaceholder(err.message || 'Failed to reload changes');
+    resetReviewProgressUi();
+    updateReviewPushButton();
+  }
+}
 
 async function openPushModal() {
   if (!syncFolder || !state.activeSiteId) {
@@ -1001,75 +1288,49 @@ async function openPushModal() {
 
   pushing = false;
   reviewDiffs = [];
-  reviewSelectedPath = null;
+  reviewSelectedPaths = new Set();
+  reviewAnchorPath = null;
+  reviewFocusPath = null;
+  reviewCheckedPaths = new Set();
   els.reviewPush.disabled = true;
   els.reviewPush.textContent = 'Push changes';
   els.reviewCancel.textContent = 'Cancel';
   hide(els.reviewProgress);
   els.reviewProgressFill.style.width = '0%';
   els.reviewProgressText.textContent = '';
-  els.reviewDiffTitle.textContent = 'Loading changes…';
-  els.reviewDiffBody.replaceChildren();
-  renderReviewFileList(els.reviewFileContainer, [], null, () => {});
+  renderReviewPlaceholder('Loading changes…');
+  renderReviewFileList(
+    els.reviewFileContainer,
+    [],
+    reviewSelectedPaths,
+    null,
+    reviewCheckedPaths,
+    () => {},
+    () => {},
+  );
 
   showView('review');
 
   try {
-    const pushStatus = await window.aemDesktop.checkPush({
-      siteId: state.activeSiteId,
-      destFolder: syncFolder,
-    });
+    const { empty, diffs } = await loadReviewChanges();
 
-    const total = pushStatus.modified.length
-      + pushStatus.localNew.length
-      + pushStatus.deleted.length;
-
-    if (total === 0) {
-      els.reviewDiffTitle.textContent = 'No local changes to push';
-      renderReviewFileList(els.reviewFileContainer, [], null, () => {});
+    if (empty) {
+      renderReviewFileList(
+        els.reviewFileContainer,
+        [],
+        reviewSelectedPaths,
+        null,
+        reviewCheckedPaths,
+        () => {},
+        () => {},
+      );
+      renderReviewPlaceholder('No local changes to push');
       return;
     }
 
-    reviewDiffs = await window.aemDesktop.getPushDiffs({
-      siteId: state.activeSiteId,
-      destFolder: syncFolder,
-      modified: pushStatus.modified,
-      localNew: pushStatus.localNew,
-      deleted: pushStatus.deleted,
-    });
-
-    els.reviewDiffTitle.textContent = `${pluralFiles(total)} changed`;
-    els.reviewPush.disabled = false;
-
-    renderReviewFileList(
-      els.reviewFileContainer,
-      reviewDiffs,
-      reviewSelectedPath,
-      selectReviewFile,
-    );
-
-    if (reviewDiffs.length > 0) {
-      selectReviewFile(reviewDiffs[0].daPath);
-    }
+    applyReviewDiffs(diffs);
   } catch (err) {
-    els.reviewDiffTitle.textContent = err.message || 'Failed to load changes';
-  }
-}
-
-function selectReviewFile(daPath) {
-  reviewSelectedPath = daPath;
-  const file = reviewDiffs.find((d) => d.daPath === daPath);
-
-  renderReviewFileList(
-    els.reviewFileContainer,
-    reviewDiffs,
-    reviewSelectedPath,
-    selectReviewFile,
-  );
-
-  if (file) {
-    els.reviewDiffTitle.textContent = file.daPath;
-    renderDiffView(els.reviewDiffBody, file);
+    renderReviewPlaceholder(err.message || 'Failed to load changes');
   }
 }
 
@@ -1083,7 +1344,10 @@ function closeReviewView() {
   }
   pushing = false;
   reviewDiffs = [];
-  reviewSelectedPath = null;
+  reviewSelectedPaths = new Set();
+  reviewAnchorPath = null;
+  reviewFocusPath = null;
+  reviewCheckedPaths = new Set();
   showView('browse');
   autoSyncCheck();
 }
@@ -1105,27 +1369,28 @@ function handlePushProgress(data) {
     els.reviewProgressFill.style.width = '100%';
     els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} pushed`;
     pushing = false;
-    els.reviewPush.disabled = true;
+    updateReviewPushButton({ forceDisabled: true });
     els.reviewCancel.textContent = 'Done';
   }
 }
 
 async function startPush() {
-  if (!syncFolder || !state.activeSiteId || reviewDiffs.length === 0) {
+  const selectedDiffs = checkedReviewDiffs();
+  if (!syncFolder || !state.activeSiteId || selectedDiffs.length === 0) {
     return;
   }
 
   pushing = true;
-  els.reviewPush.disabled = true;
+  updateReviewPushButton();
   show(els.reviewProgress);
-  els.reviewProgressText.textContent = 'Starting…';
+  els.reviewProgressText.textContent = `Starting — ${pluralFiles(selectedDiffs.length)}…`;
 
   removePushProgressListener = window.aemDesktop.onPushProgress(handlePushProgress);
 
-  const filesToPush = reviewDiffs
+  const filesToPush = selectedDiffs
     .filter((d) => d.status !== 'deleted')
     .map((d) => d.daPath);
-  const filesToDelete = reviewDiffs
+  const filesToDelete = selectedDiffs
     .filter((d) => d.status === 'deleted')
     .map((d) => d.daPath);
 
@@ -1140,6 +1405,8 @@ async function startPush() {
     if (result.cancelled) {
       els.reviewProgressText.textContent = 'Cancelled';
       els.reviewProgressFill.style.width = '0%';
+    } else {
+      await refreshReviewChanges();
     }
   } catch (err) {
     els.reviewProgressText.textContent = err.message || 'Push failed';
@@ -1148,6 +1415,9 @@ async function startPush() {
     if (removePushProgressListener) {
       removePushProgressListener();
       removePushProgressListener = null;
+    }
+    if (els.reviewCancel.textContent !== 'Done') {
+      updateReviewPushButton();
     }
   }
 }
@@ -1245,6 +1515,8 @@ function wireUi() {
       runSyncCheck();
     }
   });
+  els.syncOverwriteModified.addEventListener('change', updateSyncStartEnabled);
+  els.syncOverwriteConflicts.addEventListener('change', updateSyncStartEnabled);
   els.syncReveal.addEventListener('click', () => {
     if (syncedPath) {
       window.aemDesktop.revealSync(syncedPath);
@@ -1259,7 +1531,11 @@ function wireUi() {
 
   els.reviewPush.addEventListener('click', startPush);
   els.reviewCancel.addEventListener('click', closeReviewView);
-  wireReviewKeyboard(els.reviewFileContainer, null, selectReviewFile);
+  wireReviewKeyboard(els.reviewFileContainer, {
+    onSelect: focusReviewFile,
+    onSelectAll: selectAllReviewFiles,
+    onToggleCheckSelection: toggleReviewCheckSelection,
+  });
 
   window.addEventListener('dblclick', () => {
     window.aemDesktop.captureScreenshot();

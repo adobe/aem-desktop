@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
+  collectSyncedFoldersFromAem,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -148,6 +149,49 @@ test('checkSyncStatus treats missing manifest lastModified as outdated', async (
     });
     assert.equal(result.outdatedCount, 1);
     assert.deepEqual(result.outdated, ['/a.html']);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('collectSyncedFoldersFromAem lists directories under .aem', async () => {
+  const dest = join(tmpdir(), `aem-sync-folders-${Date.now()}`);
+  const aemDir = join(dest, 'o', 'r', '.aem');
+  try {
+    await mkdir(join(aemDir, 'blog', 'posts'), { recursive: true });
+    await writeFile(join(aemDir, 'blog', 'posts', 'a.html'), 'content');
+    await writeFile(join(aemDir, 'manifest.json'), '{}');
+
+    const folders = await collectSyncedFoldersFromAem(dest, 'o', 'r');
+    assert.deepEqual(folders, ['/blog', '/blog/posts']);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('checkSyncStatus includes syncedFolders from .aem layout', async () => {
+  const dest = join(tmpdir(), `aem-sync-folder-badge-${Date.now()}`);
+  const aemDir = join(dest, 'o', 'r', '.aem');
+  const workDir = join(dest, 'o', 'r');
+  try {
+    await mkdir(join(aemDir, 'docs'), { recursive: true });
+    await mkdir(join(workDir, 'docs'), { recursive: true });
+    await writeFile(join(aemDir, 'docs', 'page.html'), 'original');
+    await writeFile(join(workDir, 'docs', 'page.html'), 'original');
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      files: [{ daPath: '/docs/page.html', lastModified: '2026-01-01T00:00:00Z' }],
+    }));
+
+    const result = await checkSyncStatus({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      remoteFiles: [
+        { daPath: '/docs/page.html', lastModified: '2026-01-01T00:00:00Z' },
+      ],
+    });
+    assert.deepEqual(result.syncedFolders, ['/docs']);
+    assert.equal(result.unchangedCount, 1);
   } finally {
     await rm(dest, { recursive: true, force: true });
   }

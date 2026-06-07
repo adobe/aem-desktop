@@ -72,10 +72,6 @@
         </aside>
 
         <main class="content">
-          <header class="content-header">
-            <h1 id="content-title">Select a file</h1>
-            <span id="content-mode" class="content-mode"></span>
-          </header>
           <div id="content-body" class="content-body">
             <p class="placeholder">Select a file from the folder list.</p>
           </div>
@@ -85,10 +81,12 @@
       <div id="review-view" class="review-view hidden" hidden>
         <aside class="review-rail">
           <div class="review-rail-header">
-            <span class="review-rail-title">Changed files</span>
-            <span class="review-rail-spacer"></span>
-            <button type="button" id="review-cancel" class="btn">Cancel</button>
-            <button type="button" id="review-push" class="btn primary" disabled>Push changes</button>
+            <span class="review-rail-title">Changes</span>
+            <span class="rail-header-spacer"></span>
+            <div class="rail-header-actions">
+              <button type="button" id="review-cancel" class="s2-btn">Cancel</button>
+              <button type="button" id="review-push" class="s2-btn s2-btn-primary" disabled>Push changes</button>
+            </div>
           </div>
           <div id="review-file-container" class="review-rail-body"></div>
           <div id="review-progress" class="review-progress hidden" hidden>
@@ -100,9 +98,6 @@
         </aside>
 
         <main class="review-content">
-          <header class="review-content-header">
-            <h1 id="review-diff-title">Select a file to see changes</h1>
-          </header>
           <div id="review-diff-body" class="review-diff-body">
             <p class="placeholder">Select a file to see changes.</p>
           </div>
@@ -113,7 +108,11 @@
       <div class="modal">
         <h2 class="modal-title">Sync to Local Folder</h2>
         <div class="modal-body">
-          <p id="sync-selection-info" class="sync-info"></p>
+          <div class="sync-selection">
+            <p class="sync-selection-label">Selected</p>
+            <ul id="sync-selection-list" class="sync-path-list"></ul>
+            <p id="sync-selection-summary" class="sync-info"></p>
+          </div>
           <div class="sync-folder-row">
             <span id="sync-folder-path" class="sync-folder-path">No folder selected</span>
             <button type="button" id="sync-pick-folder" class="btn-link">Change…</button>
@@ -131,6 +130,14 @@
           </div>
           <div id="sync-local-only" class="sync-notice warn hidden" hidden>
             <p id="sync-local-only-text" class="sync-notice-text warn"></p>
+          </div>
+          <div id="sync-modified-warning" class="sync-notice warn hidden" hidden>
+            <p class="sync-notice-text warn">These files were modified locally. Syncing will overwrite your local changes.</p>
+            <ul id="sync-modified-list" class="sync-path-list"></ul>
+            <label class="sync-option">
+              <input type="checkbox" id="sync-overwrite-modified" />
+              <span>Overwrite local changes</span>
+            </label>
           </div>
           <div id="sync-conflict-warning" class="sync-conflict-warning hidden" hidden>
             <p id="sync-conflict-text" class="sync-conflict-text"></p>

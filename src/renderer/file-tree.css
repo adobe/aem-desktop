@@ -22,7 +22,7 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background-color: var(--s2-gray-25);
+  background-color: var(--rail-row-bg);
   color: var(--s2-gray-900);
   font-family: var(--s2-font-family);
   font-size: var(--s2-component-m-regular-font-size);
@@ -31,21 +31,90 @@
 }
 
 .browser-section {
-  background-color: var(--s2-gray-25);
+  background-color: var(--rail-row-bg);
 }
 
-.file-tree-header {
+.file-tree-header,
+.review-rail-header {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--s2-spacing-100);
-  min-height: var(--s2-spacing-500);
-  padding: var(--s2-spacing-100) var(--s2-spacing-100) var(--s2-spacing-75);
-  box-shadow: inset 0 -1px 0 0 var(--rule);
-  background-color: var(--s2-gray-25);
+  box-sizing: border-box;
+  min-height: var(--rail-row-height);
+  height: var(--rail-row-height);
+  padding: 0 var(--s2-spacing-100);
+  box-shadow: inset 0 -1px 0 0 var(--s2-gray-200);
+  background-color: var(--rail-header-bg);
 }
 
-.file-tree-title {
+.rail-header-spacer,
+.review-rail-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2-spacing-75);
+  flex-shrink: 0;
+}
+
+.s2-btn {
+  -webkit-app-region: no-drag;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: var(--s2-button-s-height);
+  height: var(--s2-button-s-height);
+  padding: 0 var(--s2-button-s-padding-x);
+  border: 1px solid var(--s2-gray-300);
+  border-radius: var(--s2-button-s-radius);
+  background: var(--s2-gray-25);
+  color: var(--s2-gray-800);
+  font-family: var(--s2-font-family);
+  font-size: var(--s2-button-s-font-size);
+  line-height: var(--s2-button-s-line-height);
+  font-weight: var(--s2-button-s-font-weight);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.s2-btn:hover:not(:disabled) {
+  background: var(--s2-gray-100);
+}
+
+.s2-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.s2-btn-accent {
+  border-color: var(--s2-blue-900);
+  color: var(--s2-blue-900);
+}
+
+.s2-btn-accent:hover:not(:disabled) {
+  background: var(--s2-blue-100);
+}
+
+.s2-btn-primary {
+  background: var(--s2-blue-900);
+  border-color: var(--s2-blue-900);
+  color: rgb(255 255 255);
+}
+
+.s2-btn-primary:hover:not(:disabled) {
+  background: var(--s2-blue-1000);
+  border-color: var(--s2-blue-1000);
+}
+
+.file-tree-title,
+.review-rail-title {
   font-size: var(--s2-component-xs-medium-font-size);
   line-height: var(--s2-component-xs-medium-line-height);
   font-weight: var(--s2-component-xs-medium-font-weight);
@@ -69,32 +138,6 @@
   font-weight: var(--s2-component-xs-medium-font-weight);
   letter-spacing: normal;
   text-transform: none;
-}
-
-.btn-tree-action {
-  font: inherit;
-  font-size: var(--s2-component-xs-regular-font-size);
-  font-weight: 500;
-  padding: 0.15rem 0.5rem;
-  border: 1px solid var(--rule);
-  border-radius: var(--s2-corner-radius-100);
-  background: transparent;
-  color: var(--s2-gray-800);
-  cursor: pointer;
-}
-
-.btn-tree-action:hover:not(:disabled) {
-  background: var(--s2-gray-100);
-}
-
-.btn-tree-action:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.btn-tree-action.has-changes {
-  border-color: #3b78b5;
-  color: #6ab0f3;
 }
 
 .file-tree .tree {
@@ -121,7 +164,7 @@
   min-height: var(--s2-spacing-700);
   padding: 0;
   border: none;
-  background-color: var(--s2-gray-25);
+  background-color: var(--rail-row-bg);
   color: var(--s2-gray-900);
   font-family: inherit;
   font-size: var(--s2-component-m-regular-font-size);

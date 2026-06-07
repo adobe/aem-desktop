@@ -125,6 +125,42 @@ async function walkLocalDir(dir) {
 }
 
 /**
+ * Lists folder daPaths that have a corresponding directory under `.aem`
+ * (i.e. content from that folder has been synced at least once).
+ *
+ * @param {string} destRoot
+ * @param {string} org
+ * @param {string} repo
+ * @returns {Promise<string[]>}
+ */
+export async function collectSyncedFoldersFromAem(destRoot, org, repo) {
+  const aemRoot = join(syncRoot(destRoot, org, repo), '.aem');
+  const folders = new Set();
+
+  async function walk(dir, relSegments) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === 'manifest.json' && relSegments.length === 0) {
+        continue; // eslint-disable-line no-continue
+      }
+      if (entry.isDirectory()) {
+        const segs = [...relSegments, entry.name];
+        folders.add(`/${segs.join('/')}`);
+        await walk(join(dir, entry.name), segs); // eslint-disable-line no-await-in-loop
+      }
+    }
+  }
+
+  await walk(aemRoot, []);
+  return [...folders].sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Reads the existing manifest and compares remote file states against
  * local copies to classify each file as new, updated, conflicted,
  * deleted locally, or local-only (exists on disk but not on remote).
@@ -145,6 +181,7 @@ export async function checkSyncStatus({
   try {
     manifest = JSON.parse(await readFile(mPath, 'utf8'));
   } catch {
+    const syncedFolders = await collectSyncedFoldersFromAem(destRoot, org, repo);
     return {
       newCount: remoteFiles.length,
       modifiedCount: 0,
@@ -162,6 +199,7 @@ export async function checkSyncStatus({
       deletedLocally: [],
       localNew: [],
       localOnly: [],
+      syncedFolders,
     };
   }
 
@@ -244,6 +282,8 @@ export async function checkSyncStatus({
     }
   }
 
+  const syncedFolders = await collectSyncedFoldersFromAem(destRoot, org, repo);
+
   return {
     newCount: newFiles.length,
     modifiedCount: modified.length,
@@ -261,6 +301,7 @@ export async function checkSyncStatus({
     deletedLocally,
     localNew,
     localOnly,
+    syncedFolders,
   };
 }
 
@@ -490,7 +531,7 @@ export async function checkPushStatus({ destRoot, org, repo }) {
       continue; // eslint-disable-line no-continue
     }
     const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
-    if (origBuf && !origBuf.equals(workBuf)) {
+    if (!origBuf || !origBuf.equals(workBuf)) {
       modified.push(daPath);
     }
   }
