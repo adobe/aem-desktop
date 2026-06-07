@@ -13,8 +13,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPreviewUrl,
+  buildProxyPreviewUrl,
+  buildUpstreamPreviewUrl,
   daPathToPreviewPath,
+  isAllowedProxyPreviewNavigation,
   isSamePreviewOrigin,
+  pathnameToPreviewPath,
+  previewPathToLocalRelativePaths,
 } from '../src/main/preview-url.js';
 
 test('daPathToPreviewPath strips .html extension', () => {
@@ -61,4 +66,42 @@ test('isSamePreviewOrigin compares origins only', () => {
   const origin = 'https://main--id--davidnuescheler.aem.page';
   assert.equal(isSamePreviewOrigin(origin, `${origin}/blog`), true);
   assert.equal(isSamePreviewOrigin(origin, 'https://other.aem.page/'), false);
+});
+
+test('pathnameToPreviewPath normalizes request paths', () => {
+  assert.equal(pathnameToPreviewPath('/'), '/');
+  assert.equal(pathnameToPreviewPath('/iba'), '/iba');
+  assert.equal(pathnameToPreviewPath('iba'), '/iba');
+});
+
+test('previewPathToLocalRelativePaths resolves html and json paths', () => {
+  assert.deepEqual(previewPathToLocalRelativePaths('/'), ['index.html']);
+  assert.deepEqual(previewPathToLocalRelativePaths('/that/'), ['that/index.html']);
+  assert.deepEqual(previewPathToLocalRelativePaths('/blog/post'), ['blog/post.html']);
+  assert.deepEqual(previewPathToLocalRelativePaths('/query-index.json'), ['query-index.json']);
+});
+
+test('buildProxyPreviewUrl serves at localhost root like helix-cli', () => {
+  const built = buildProxyPreviewUrl('http://127.0.0.1:4567', '/iba.html');
+  assert.equal(built.url, 'http://127.0.0.1:4567/iba');
+  assert.equal(built.previewOrigin, 'http://127.0.0.1:4567');
+});
+
+test('isAllowedProxyPreviewNavigation allows same proxy origin only', () => {
+  const origin = 'http://127.0.0.1:4567';
+  assert.equal(isAllowedProxyPreviewNavigation(origin, `${origin}/iba`), true);
+  assert.equal(isAllowedProxyPreviewNavigation(origin, `${origin}/styles.css`), true);
+  assert.equal(isAllowedProxyPreviewNavigation(origin, 'https://example.com/'), false);
+});
+
+test('buildUpstreamPreviewUrl preserves preview path on .aem.page', () => {
+  const origin = 'https://main--id--davidnuescheler.aem.page';
+  assert.equal(
+    buildUpstreamPreviewUrl(origin, '/blog/post', '?sheet=main'),
+    'https://main--id--davidnuescheler.aem.page/blog/post?sheet=main',
+  );
+  assert.equal(
+    buildUpstreamPreviewUrl(origin, '/'),
+    'https://main--id--davidnuescheler.aem.page/',
+  );
 });

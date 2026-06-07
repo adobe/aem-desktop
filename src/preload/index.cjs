@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   captureScreenshot: () => ipcRenderer.invoke('dev:capture-screenshot'),
+  isDev: () => ipcRenderer.invoke('app:is-dev'),
+  openAppDevTools: () => ipcRenderer.invoke('dev:open-app-devtools'),
 
   listSites: () => ipcRenderer.invoke('sites:list'),
   addSite: (url) => ipcRenderer.invoke('sites:add', { url }),
@@ -29,6 +31,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
+  setActivePreviewSite: (siteId) => ipcRenderer.invoke('preview:set-active-site', { siteId }),
 
   pickSyncFolder: () => ipcRenderer.invoke('sync:pick-folder'),
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),

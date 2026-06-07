@@ -34,7 +34,11 @@
   },
   "dependencies": {
     "electron-log": "5.2.4",
-    "electron-updater": "6.3.9"
+    "electron-updater": "6.3.9",
+    "hast-util-select": "6.0.4",
+    "hast-util-to-html": "9.0.5",
+    "rehype-parse": "9.0.1",
+    "unified": "11.0.5"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "3.0.16",

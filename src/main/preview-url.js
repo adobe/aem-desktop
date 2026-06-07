@@ -10,6 +10,19 @@
  * governing permissions and limitations under the License.
  */
 
+/**
+ * Normalizes a request pathname to a preview path (leading slash, `/` for root).
+ *
+ * @param {string} pathname
+ * @returns {string}
+ */
+export function pathnameToPreviewPath(pathname) {
+  if (!pathname || pathname === '/') {
+    return '/';
+  }
+  return pathname.startsWith('/') ? pathname : `/${pathname}`;
+}
+
 /** Document extensions that map to clean URL paths on .aem.page. */
 const DOCUMENT_EXTENSIONS = ['html'];
 
@@ -90,4 +103,78 @@ export function isSamePreviewOrigin(previewUrlOrigin, url) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Maps a clean preview path to repo-relative paths under the sync folder.
+ *
+ * @param {string} previewPath
+ * @returns {string[]}
+ */
+export function previewPathToLocalRelativePaths(previewPath) {
+  const normalized = previewPath.startsWith('/') ? previewPath : `/${previewPath}`;
+  if (normalized === '/') {
+    return ['index.html'];
+  }
+  if (normalized.endsWith('/')) {
+    return [`${normalized.slice(1)}index.html`];
+  }
+  const lastSegment = normalized.slice(normalized.lastIndexOf('/') + 1);
+  if (lastSegment.includes('.')) {
+    return [normalized.slice(1)];
+  }
+  return [`${normalized.slice(1)}.html`];
+}
+
+/**
+ * @param {string} proxyBase - e.g. http://127.0.0.1:4567
+ * @param {string} daPath
+ * @returns {{ url: string, previewPath: string, previewOrigin: string }}
+ */
+export function buildProxyPreviewUrl(proxyBase, daPath) {
+  const base = proxyBase.replace(/\/+$/, '');
+  const previewPath = daPathToPreviewPath(daPath);
+  if (previewPath === '/') {
+    return {
+      url: `${base}/`,
+      previewPath,
+      previewOrigin: base,
+    };
+  }
+  return {
+    url: `${base}${previewPath}`,
+    previewPath,
+    previewOrigin: base,
+  };
+}
+
+/**
+ * @param {string} proxyOrigin
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isAllowedProxyPreviewNavigation(proxyOrigin, url) {
+  try {
+    const { origin } = new URL(proxyOrigin);
+    const target = new URL(url);
+    return target.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds the upstream .aem.page URL for a preview path.
+ *
+ * @param {string} previewUrlOrigin
+ * @param {string} previewPath
+ * @param {string} [search='']
+ * @returns {string}
+ */
+export function buildUpstreamPreviewUrl(previewUrlOrigin, previewPath, search = '') {
+  const base = previewUrlOrigin.replace(/\/+$/, '');
+  if (previewPath === '/') {
+    return `${base}/${search}`;
+  }
+  return `${base}${previewPath}${search}`;
 }

@@ -29,7 +29,9 @@ import {
 } from './site-store.js';
 import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
 import { formatContentForDisplay } from './content-format.js';
-import { buildPreviewUrl, daPathToPreviewPath } from './preview-url.js';
+import { buildProxyPreviewUrl } from './preview-url.js';
+import { startPreviewServer } from './preview-server.js';
+import { createHeadHtmlCache } from './head-html.js';
 import {
   runSync, syncRoot, checkSyncStatus,
   collectFolder, isBinaryExtension,
@@ -52,6 +54,18 @@ const SYNC_FOLDER_FILENAME = 'sync-folder.json';
 
 let mainWindow;
 let sitesCache = [];
+let previewServerBase = null;
+let activePreviewSiteId = null;
+/** @type {ReturnType<typeof createHeadHtmlCache>|null} */
+let previewHeadHtmlCache = null;
+
+function setActivePreviewSite(siteId) {
+  if (activePreviewSiteId === siteId) {
+    return;
+  }
+  activePreviewSiteId = siteId || null;
+  previewHeadHtmlCache?.clear();
+}
 
 function userDataPath(name) {
   return join(app.getPath('userData'), name);
@@ -116,6 +130,16 @@ async function createWindow() {
 
 ipcMain.handle('app:get-version', () => app.getVersion());
 
+ipcMain.handle('app:is-dev', () => !app.isPackaged);
+
+ipcMain.handle('dev:open-app-devtools', (event) => {
+  if (app.isPackaged) {
+    return false;
+  }
+  event.sender.openDevTools({ mode: 'detach' });
+  return true;
+});
+
 ipcMain.handle('app:open-external', (_event, { url }) => {
   shell.openExternal(url);
 });
@@ -126,10 +150,19 @@ ipcMain.handle('preview:build-url', async (_event, { siteId, daPath }) => {
   if (!site) {
     throw new Error('Site not found');
   }
-  return {
-    url: buildPreviewUrl(site.previewUrl, daPath),
-    previewPath: daPathToPreviewPath(daPath),
-  };
+  if (!previewServerBase) {
+    throw new Error('Preview proxy is not ready');
+  }
+  setActivePreviewSite(siteId);
+  return buildProxyPreviewUrl(previewServerBase, daPath);
+});
+
+ipcMain.handle('preview:set-active-site', async (_event, { siteId }) => {
+  const sites = await ensureSitesLoaded();
+  if (siteId && !findSite(sites, siteId)) {
+    throw new Error('Site not found');
+  }
+  setActivePreviewSite(siteId || null);
 });
 
 ipcMain.handle('sites:list', async () => {
@@ -431,6 +464,29 @@ ipcMain.handle('dev:capture-screenshot', async (event) => {
 });
 
 app.whenReady().then(async () => {
+  previewHeadHtmlCache = createHeadHtmlCache();
+  const previewServer = await startPreviewServer({
+    log,
+    headHtmlCache: previewHeadHtmlCache,
+    getActiveSite: async () => {
+      if (!activePreviewSiteId) {
+        return null;
+      }
+      const sites = await ensureSitesLoaded();
+      const site = findSite(sites, activePreviewSiteId);
+      if (!site) {
+        return null;
+      }
+      return {
+        org: site.org,
+        repo: site.repo,
+        previewUrl: site.previewUrl,
+      };
+    },
+    getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
+  });
+  previewServerBase = previewServer.baseUrl;
+
   await createWindow();
   initAutoUpdater({ isPackaged: app.isPackaged });
 
@@ -438,6 +494,10 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
+  });
+
+  app.on('will-quit', () => {
+    previewServer.close().catch(() => {});
   });
 });
 

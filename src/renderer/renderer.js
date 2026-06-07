@@ -152,6 +152,7 @@ async function enterBrowse(siteId) {
     return;
   }
   state.activeSiteId = siteId;
+  await window.aemDesktop.setActivePreviewSite(siteId);
   resetTree();
   renderContentPlaceholder('Select a file from the folder list.');
   showView('browse');
@@ -255,6 +256,7 @@ function renderAuthStatus() {
 
 let previewWebview = null;
 let previewOrigin = null;
+let previewDevEnabled = null;
 
 function destroyPreviewWebview() {
   if (previewWebview) {
@@ -274,16 +276,62 @@ function renderContentPlaceholder(message) {
   els.contentBody.append(p);
 }
 
-function samePreviewOrigin(origin, url) {
+function isAllowedPreviewNavigation(url) {
+  if (!previewOrigin) {
+    return false;
+  }
   try {
-    return new URL(url).origin === new URL(origin).origin;
+    const target = new URL(url);
+    return target.origin === new URL(previewOrigin).origin;
   } catch {
     return false;
   }
 }
 
-function ensurePreviewWebview(previewUrlOrigin) {
-  if (previewWebview && previewOrigin === previewUrlOrigin) {
+async function previewDevMode() {
+  if (previewDevEnabled === null) {
+    previewDevEnabled = await window.aemDesktop.isDev();
+  }
+  return previewDevEnabled;
+}
+
+function wirePreviewWebviewDevTools(webview) {
+  webview.addEventListener('did-fail-load', (event) => {
+    if (event.isMainFrame) {
+      console.error(
+        `[preview] main frame failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
+      );
+    } else {
+      console.warn(
+        `[preview] subresource failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
+      );
+    }
+  });
+
+  webview.addEventListener('did-finish-load', () => {
+    console.info(`[preview] loaded ${webview.getURL()}`);
+  });
+
+  webview.addEventListener('console-message', (event) => {
+    const line = `[preview:${event.level}] ${event.message}`;
+    if (event.level >= 3) {
+      console.error(line);
+    } else if (event.level === 2) {
+      console.warn(line);
+    } else {
+      console.info(line);
+    }
+  });
+}
+
+function openPreviewDevTools() {
+  if (previewWebview) {
+    previewWebview.openDevTools({ mode: 'detach' });
+  }
+}
+
+function ensurePreviewWebview(origin) {
+  if (previewWebview && previewOrigin === origin) {
     return previewWebview;
   }
 
@@ -295,7 +343,7 @@ function ensurePreviewWebview(previewUrlOrigin) {
   webview.setAttribute('allowpopups', 'false');
 
   webview.addEventListener('will-navigate', (event) => {
-    if (!samePreviewOrigin(previewUrlOrigin, event.url)) {
+    if (!isAllowedPreviewNavigation(event.url)) {
       event.preventDefault();
       window.aemDesktop.openExternal(event.url);
     }
@@ -306,16 +354,31 @@ function ensurePreviewWebview(previewUrlOrigin) {
     window.aemDesktop.openExternal(event.url);
   });
 
+  webview.addEventListener('did-start-loading', () => {
+    previewDevMode().then((dev) => {
+      if (dev) {
+        console.info(`[preview] loading ${webview.getURL()}`);
+      }
+    });
+  });
+
   els.contentBody.append(webview);
   previewWebview = webview;
-  previewOrigin = previewUrlOrigin;
+  previewOrigin = origin;
+
+  previewDevMode().then((dev) => {
+    if (dev && webview === previewWebview) {
+      wirePreviewWebviewDevTools(webview);
+    }
+  });
+
   return webview;
 }
 
-function showPreview({ url, previewUrlOrigin }) {
+function showPreview({ url, previewOrigin: origin }) {
   els.contentBody.classList.add('is-preview');
 
-  const webview = ensurePreviewWebview(previewUrlOrigin);
+  const webview = ensurePreviewWebview(origin);
   webview.src = url;
 }
 
@@ -539,10 +602,8 @@ async function previewFile(item) {
   try {
     const preview = await window.aemDesktop.buildPreviewUrl(state.activeSiteId, item.daPath);
     showPreview({
-      daPath: item.daPath,
       url: preview.url,
-      previewPath: preview.previewPath,
-      previewUrlOrigin: site.previewUrl,
+      previewOrigin: preview.previewOrigin,
     });
   } catch (err) {
     renderContentPlaceholder(err.message || 'Failed to load preview');
@@ -1445,6 +1506,16 @@ function wireUi() {
       if (state.view === 'browse') {
         hardRefresh();
       }
+    }
+
+    // Dev only: ⌥⌘I opens preview webview DevTools, ⌥⌘D opens app DevTools.
+    if ((event.metaKey || event.ctrlKey) && event.altKey && event.code === 'KeyI') {
+      event.preventDefault();
+      openPreviewDevTools();
+    }
+    if ((event.metaKey || event.ctrlKey) && event.altKey && event.code === 'KeyD') {
+      event.preventDefault();
+      window.aemDesktop.openAppDevTools();
     }
   });
 
