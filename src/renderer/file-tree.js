@@ -105,6 +105,11 @@ function renderPanelHeader(selectionCount, options) {
     pullBtn.className = 's2-btn';
     pullBtn.textContent = 'Sync selected…';
     pullBtn.disabled = selectionCount === 0;
+    if (selectionCount === 0) {
+      pullBtn.title = 'Select files or folders in the tree to sync';
+    } else {
+      pullBtn.removeAttribute('title');
+    }
     pullBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       onPull();

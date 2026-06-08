@@ -245,11 +245,16 @@ function renderAuthStatus() {
     els.authStatus.classList.add('ok');
     hide(els.signInBtn);
     show(els.signOutBtn);
+    els.addSiteToggle.disabled = false;
   } else {
     els.authStatus.textContent = 'Sign in to DA to open a site';
     els.authStatus.classList.remove('ok');
     show(els.signInBtn);
     hide(els.signOutBtn);
+    els.addSiteToggle.disabled = true;
+    hide(els.addSiteForm);
+    setError('');
+    els.siteUrlInput.value = '';
   }
   renderSites();
 }
@@ -816,7 +821,15 @@ function resetSyncModalState() {
   els.syncProgressText.textContent = '';
   els.syncStart.textContent = 'Sync';
   els.syncCancel.textContent = 'Cancel';
+  show(els.syncCancel);
   syncing = false;
+}
+
+function showSyncCompleteActions() {
+  syncing = false;
+  els.syncStart.disabled = false;
+  els.syncStart.textContent = 'Close';
+  hide(els.syncCancel);
 }
 
 function updateSyncFolderDisplay() {
@@ -1063,8 +1076,6 @@ function handleSyncProgress(data) {
     els.syncProgressFill.style.width = '100%';
     els.syncProgressText.textContent = `Done — ${pluralFiles(data.total)} synced`;
     syncing = false;
-    els.syncStart.disabled = true;
-    els.syncCancel.textContent = 'Close';
     if (syncedPath) {
       show(els.syncReveal);
     }
@@ -1099,6 +1110,7 @@ async function startSync() {
   ];
   const skipConflicts = skips.length > 0 ? skips : undefined;
 
+  let syncSucceeded = false;
   try {
     const items = getSelectedItems();
     const result = await window.aemDesktop.runSync({
@@ -1114,6 +1126,7 @@ async function startSync() {
       els.syncProgressFill.style.width = '0%';
       autoSyncCheck();
     } else {
+      syncSucceeded = true;
       if (result.syncedPath) {
         syncedPath = result.syncedPath;
       }
@@ -1124,10 +1137,15 @@ async function startSync() {
   } finally {
     syncing = false;
     els.syncPickFolder.disabled = false;
-    els.syncCancel.textContent = 'Close';
     if (removeSyncProgressListener) {
       removeSyncProgressListener();
       removeSyncProgressListener = null;
+    }
+    if (syncSucceeded) {
+      showSyncCompleteActions();
+    } else {
+      els.syncCancel.textContent = 'Close';
+      updateSyncStartEnabled();
     }
   }
 }
@@ -1578,7 +1596,13 @@ function wireUi() {
   });
 
   els.syncPickFolder.addEventListener('click', pickSyncFolder);
-  els.syncStart.addEventListener('click', startSync);
+  els.syncStart.addEventListener('click', () => {
+    if (els.syncStart.textContent === 'Close') {
+      closeSyncModal();
+      return;
+    }
+    startSync();
+  });
   els.syncCancel.addEventListener('click', closeSyncModal);
   els.syncIncludeBinaries.addEventListener('change', () => {
     if (syncFolder && !syncing) {
