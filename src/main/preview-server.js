@@ -1,0 +1,235 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+import { createServer } from 'node:http';
+import { Readable } from 'node:stream';
+import { syncRoot } from './da-sync.js';
+import {
+  buildUpstreamPreviewUrl,
+  pathnameToPreviewPath,
+} from './preview-url.js';
+import {
+  readLocalPreviewContent,
+  resolveLocalContentFile,
+} from './preview-local.js';
+import { createHeadHtmlCache } from './head-html.js';
+
+const noop = () => {};
+
+/**
+ * @param {import('electron-log').MainLogger|undefined} log
+ */
+function previewLogger(log) {
+  if (log?.scope) {
+    return log.scope('preview');
+  }
+  return {
+    debug: noop,
+    info: noop,
+    warn: noop,
+    error: noop,
+  };
+}
+
+const SKIP_REQUEST_HEADERS = new Set([
+  'connection',
+  'host',
+  'proxy-connection',
+  'if-modified-since',
+]);
+
+const SKIP_RESPONSE_HEADERS = new Set([
+  'connection',
+  'content-encoding',
+  'content-length',
+  'content-security-policy',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailers',
+  'transfer-encoding',
+  'upgrade',
+  'x-frame-options',
+]);
+
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
+ * @param {string} message
+ */
+function sendText(res, status, message) {
+  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
+  res.end(message);
+}
+
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} upstreamUrl
+ * @param {string} proxyHost
+ */
+async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
+  /** @type {Record<string, string>} */
+  const reqHeaders = {
+    'x-forwarded-host': proxyHost,
+    'x-forwarded-scheme': 'http',
+  };
+  const names = Object.keys(req.headers);
+  for (let i = 0; i < names.length; i += 1) {
+    const name = names[i];
+    if (!SKIP_REQUEST_HEADERS.has(name.toLowerCase())) {
+      reqHeaders[name] = /** @type {string} */ (req.headers[name]);
+    }
+  }
+
+  const upstream = await fetch(upstreamUrl, {
+    method: req.method,
+    headers: reqHeaders,
+    redirect: 'follow',
+  });
+
+  /** @type {Record<string, string|string[]>} */
+  const respHeaders = {
+    'access-control-allow-origin': '*',
+  };
+  upstream.headers.forEach((value, key) => {
+    if (!SKIP_RESPONSE_HEADERS.has(key.toLowerCase())) {
+      respHeaders[key] = value;
+    }
+  });
+
+  res.writeHead(upstream.status, respHeaders);
+
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+
+  if (!upstream.body) {
+    res.end();
+    return;
+  }
+
+  Readable.fromWeb(upstream.body).pipe(res);
+}
+
+/**
+ * @param {{
+ *   getActiveSite: () => Promise<{ org: string, repo: string, previewUrl: string }|null>,
+ *   getSyncFolder: () => Promise<string|null>,
+ *   log?: import('electron-log').MainLogger,
+ * }} deps
+ * @returns {Promise<{ baseUrl: string, close: () => Promise<void> }>}
+ */
+export async function startPreviewServer(deps) {
+  const scope = previewLogger(deps.log);
+  const headHtmlCache = deps.headHtmlCache || createHeadHtmlCache();
+
+  const server = createServer(async (req, res) => {
+    if (!req.url) {
+      sendText(res, 400, 'Bad request');
+      return;
+    }
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendText(res, 405, 'Method not allowed');
+      return;
+    }
+
+    const requestUrl = new URL(req.url, 'http://127.0.0.1');
+    const previewPath = pathnameToPreviewPath(requestUrl.pathname);
+
+    const site = await deps.getActiveSite();
+    if (!site) {
+      sendText(res, 503, 'No active site for preview');
+      return;
+    }
+    const pathWithQuery = `${previewPath}${requestUrl.search}`;
+    const absolutePageUrl = `${requestUrl.origin}${requestUrl.pathname}${requestUrl.search}`;
+    const upstreamUrl = buildUpstreamPreviewUrl(
+      site.previewUrl,
+      previewPath,
+      requestUrl.search,
+    );
+
+    const syncFolder = await deps.getSyncFolder();
+    if (syncFolder) {
+      const localRoot = syncRoot(syncFolder, site.org, site.repo);
+      const localFile = await resolveLocalContentFile(localRoot, previewPath);
+      if (localFile) {
+        try {
+          const headHtml = await headHtmlCache.resolve({
+            previewUrlOrigin: site.previewUrl,
+            syncRootDir: localRoot,
+          });
+          const { body, contentType } = await readLocalPreviewContent(
+            localFile.filePath,
+            localFile.relativePath,
+            absolutePageUrl,
+            headHtml,
+          );
+          res.writeHead(200, {
+            'content-type': contentType,
+            'access-control-allow-origin': '*',
+          });
+          if (req.method === 'HEAD') {
+            res.end();
+          } else {
+            res.end(body);
+          }
+          scope.info(`local ${localFile.relativePath} -> 200 ${pathWithQuery}`);
+          return;
+        } catch (err) {
+          scope.warn(`failed to read local file ${localFile.filePath}: ${err.message}`);
+        }
+      }
+    }
+
+    const proxyHost = req.headers.host || requestUrl.host;
+    try {
+      await proxyUpstream(req, res, upstreamUrl, proxyHost);
+      scope.info(`proxy ${pathWithQuery} -> ${upstreamUrl} (${res.statusCode})`);
+    } catch (err) {
+      scope.error(`proxy failed for ${upstreamUrl}: ${err.message}`);
+      if (!res.headersSent) {
+        sendText(res, 502, `Failed to proxy AEM request: ${err.message}`);
+      }
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Preview server did not bind to a TCP port');
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  scope.info(`Preview proxy listening on ${baseUrl}`);
+
+  return {
+    baseUrl,
+    headHtmlCache,
+    close: () => new Promise((resolve, reject) => {
+      server.close((err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve();
+      });
+    }),
+  };
+}

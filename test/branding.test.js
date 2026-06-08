@@ -38,3 +38,22 @@ test('Adobe Clean fonts are bundled with the renderer', () => {
     assert.ok(statSync(file).size > 0, `${file} must exist`);
   }
 });
+
+test('S2 file-type icons are bundled with the renderer', () => {
+  for (const icon of [
+    'S2_Icon_Folder_20_N.svg',
+    'S2_Icon_FileText_20_N.svg',
+    'S2_Icon_Image_20_N.svg',
+    'S2_Icon_Table_20_N.svg',
+  ]) {
+    const file = join(root, 'src', 'renderer', 'icons', icon);
+    assert.ok(statSync(file).size > 0, `${file} must exist`);
+  }
+});
+
+test('S2 design tokens and file-tree styles are bundled', () => {
+  for (const file of ['s2-tokens.css', 'file-tree.css']) {
+    const path = join(root, 'src', 'renderer', file);
+    assert.ok(statSync(path).size > 0, `${path} must exist`);
+  }
+});

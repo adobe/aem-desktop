@@ -4,20 +4,164 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; webview-src http://127.0.0.1:* http://localhost:* https://*.aem.page https://*.hlx.page https://*.aem.live https://*.hlx.live"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AEM Desktop</title>
+    <link rel="stylesheet" href="s2-tokens.css" />
+    <link rel="stylesheet" href="file-tree.css" />
+    <link rel="stylesheet" href="review-view.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <img class="logo" src="logo.png" alt="AEM Desktop" />
-      <h1>AEM Desktop</h1>
-      <p class="tagline">Adobe Experience Manager &mdash; Edge Delivery Services</p>
-      <p class="hmr">Hot reload is working &mdash; edited live at <span id="loaded">&hellip;</span></p>
-      <p class="version">Version <span id="version">&hellip;</span></p>
-    </main>
+    <div id="app" class="app">
+      <header class="titlebar" aria-hidden="true"></header>
+
+      <nav id="site-nav" class="site-nav hidden" hidden aria-label="Site">
+        <button type="button" id="nav-home" class="nav-home" title="Back to sites">
+          <span class="nav-home-icon" aria-hidden="true">‹</span>
+          <span class="nav-home-label">Sites</span>
+        </button>
+        <div class="nav-site">
+          <span id="nav-org" class="nav-pill"></span>
+          <span class="nav-sep" aria-hidden="true">/</span>
+          <span id="nav-repo" class="nav-pill"></span>
+          <span id="nav-branch" class="nav-branch"></span>
+        </div>
+      </nav>
+
+      <main id="home-view" class="home-view">
+        <div class="home-inner">
+          <header class="home-header">
+            <h1>Sites</h1>
+            <button type="button" id="add-site-toggle" class="btn primary" disabled>Add site</button>
+          </header>
+
+          <form id="add-site-form" class="add-site-form hidden" hidden>
+            <input
+              id="site-url-input"
+              type="url"
+              placeholder="https://main--site--owner.aem.page/"
+              spellcheck="false"
+              required
+            />
+            <div class="form-actions">
+              <button type="submit" class="btn primary">Add</button>
+              <button type="button" id="add-site-cancel" class="btn">Cancel</button>
+            </div>
+            <p id="add-site-error" class="error hidden" hidden></p>
+          </form>
+
+          <ul id="site-list" class="site-list"></ul>
+        </div>
+
+        <footer class="home-footer">
+          <div id="auth-status" class="auth-status">Checking sign-in…</div>
+          <div class="home-auth-actions">
+            <button type="button" id="sign-in-btn" class="btn primary hidden" hidden>Sign in to DA</button>
+            <button type="button" id="sign-out-btn" class="btn hidden" hidden>Sign out</button>
+          </div>
+        </footer>
+      </main>
+
+      <div id="browse-view" class="browse-view hidden" hidden>
+        <aside class="rail">
+          <section class="rail-section browser-section">
+            <div id="file-tree" class="file-tree"></div>
+          </section>
+        </aside>
+
+        <main class="content">
+          <div id="content-body" class="content-body">
+            <p class="placeholder">Select a file from the folder list.</p>
+          </div>
+        </main>
+      </div>
+
+      <div id="review-view" class="review-view hidden" hidden>
+        <aside class="review-rail">
+          <div class="review-rail-header">
+            <span class="review-rail-title">Changes</span>
+            <span class="rail-header-spacer"></span>
+            <div class="rail-header-actions">
+              <button type="button" id="review-cancel" class="s2-btn">Cancel</button>
+              <button type="button" id="review-push" class="s2-btn s2-btn-primary" disabled>Push changes</button>
+            </div>
+          </div>
+          <div id="review-file-container" class="review-rail-body"></div>
+          <div id="review-progress" class="review-progress hidden" hidden>
+            <div class="sync-progress-bar">
+              <div id="review-progress-fill" class="sync-progress-fill"></div>
+            </div>
+            <p id="review-progress-text" class="sync-progress-text"></p>
+          </div>
+        </aside>
+
+        <main class="review-content">
+          <div id="review-diff-body" class="review-diff-body">
+            <p class="placeholder">Select a file to see changes.</p>
+          </div>
+        </main>
+      </div>
+    </div>
+    <div id="sync-modal" class="modal-overlay hidden" hidden>
+      <div class="modal">
+        <h2 class="modal-title">Sync to Local Folder</h2>
+        <div class="modal-body">
+          <div class="sync-selection">
+            <p class="sync-selection-label">Selected</p>
+            <ul id="sync-selection-list" class="sync-path-list"></ul>
+            <p id="sync-selection-summary" class="sync-info"></p>
+          </div>
+          <div class="sync-folder-row">
+            <span id="sync-folder-path" class="sync-folder-path">No folder selected</span>
+            <button type="button" id="sync-pick-folder" class="btn-link">Change…</button>
+          </div>
+          <label class="sync-option">
+            <input type="checkbox" id="sync-include-binaries" />
+            <span>Include binary files (images, videos, etc.)</span>
+          </label>
+          <div id="sync-status" class="sync-status hidden" hidden></div>
+          <div id="sync-local-new" class="sync-notice info hidden" hidden>
+            <p id="sync-local-new-text" class="sync-notice-text"></p>
+          </div>
+          <div id="sync-deleted-locally" class="sync-notice info hidden" hidden>
+            <p id="sync-deleted-locally-text" class="sync-notice-text"></p>
+          </div>
+          <div id="sync-local-only" class="sync-notice warn hidden" hidden>
+            <p id="sync-local-only-text" class="sync-notice-text warn"></p>
+          </div>
+          <div id="sync-modified-warning" class="sync-notice warn hidden" hidden>
+            <p class="sync-notice-text warn">These files were modified locally. Syncing will overwrite your local changes.</p>
+            <ul id="sync-modified-list" class="sync-path-list"></ul>
+            <label class="sync-option">
+              <input type="checkbox" id="sync-overwrite-modified" />
+              <span>Overwrite local changes</span>
+            </label>
+          </div>
+          <div id="sync-conflict-warning" class="sync-conflict-warning hidden" hidden>
+            <p id="sync-conflict-text" class="sync-conflict-text"></p>
+            <label class="sync-option">
+              <input type="checkbox" id="sync-overwrite-conflicts" />
+              <span>Overwrite local changes</span>
+            </label>
+          </div>
+          <div id="sync-progress" class="sync-progress hidden" hidden>
+            <div class="sync-progress-bar">
+              <div id="sync-progress-fill" class="sync-progress-fill"></div>
+            </div>
+            <p id="sync-progress-text" class="sync-progress-text"></p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="sync-reveal" class="btn hidden" hidden>Reveal in Finder…</button>
+          <span class="modal-actions-spacer"></span>
+          <button type="button" id="sync-start" class="btn primary" disabled>Sync</button>
+          <button type="button" id="sync-cancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="renderer.js"></script>
   </body>
 </html>

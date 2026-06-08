@@ -33,6 +33,7 @@ export function createWindowOptions(preloadPath) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
   };
 }
