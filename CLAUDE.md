@@ -153,9 +153,19 @@ to `main`, via semantic-release (`.releaserc.cjs`):
 | `APPLE_ID`                     | Apple ID for notarization                          |
 | `APPLE_APP_SPECIFIC_PASSWORD`  | App-specific password for that Apple ID            |
 | `APPLE_TEAM_ID`                | Apple Developer Team ID                            |
+| `RELEASE_TOKEN`                | Admin-owned PAT used as `GITHUB_TOKEN` for the release; bypasses the `main-protection` ruleset so the `chore(release)` commit/tag can push to `main` |
 
-Until these exist, `release.yaml` builds will fail at signing; `main.yaml`
-always runs an **unsigned** packaging smoke test so config stays green.
+Until the Apple secrets exist, `release.yaml` builds will fail at signing;
+`main.yaml` always runs an **unsigned** packaging smoke test so config stays green.
+
+> **Why a PAT and not the default `GITHUB_TOKEN`?** The `main-protection`
+> ruleset requires the `Test` status check on every push to `main`. The
+> `github-actions[bot]` is not a bypass actor, so its push of the release
+> commit is rejected (`GH013`). The ruleset's bypass list already allows the
+> **Repository admin** role, so `RELEASE_TOKEN` must be a PAT (classic `repo`
+> scope, or fine-grained with **Contents: read/write** on this repo) owned by a
+> repo admin. `[skip ci]` in the release commit keeps the PAT push from
+> triggering a recursive workflow run.
 
 > The `publish.owner`/`publish.repo` in `electron-builder.yml` (`adobe/aem-desktop`)
 > must match the actual repository, or electron-updater will look in the wrong place.

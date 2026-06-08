@@ -40,7 +40,14 @@ jobs:
 
       - name: Release (semantic-release builds, signs & notarizes)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Admin-owned PAT, NOT the default GITHUB_TOKEN. The `main-protection`
+          # ruleset requires the "Test" status check on every push to main, and
+          # the github-actions[bot] is not a bypass actor — so the bot's push of
+          # the `chore(release)` commit is rejected with GH013. The bypass list
+          # already allows the Repository admin role, so a PAT owned by a repo
+          # admin pushes the release commit/tag through. `[skip ci]` in the commit
+          # message keeps this PAT push from triggering a recursive workflow run.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           # Developer ID Application certificate, base64-encoded .p12 + password.
           CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
