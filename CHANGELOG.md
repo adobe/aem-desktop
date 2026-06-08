@@ -1,3 +1,16 @@
+# [1.2.0](https://github.com/adobe/aem-desktop/compare/v1.1.4...v1.2.0) (2026-06-08)
+
+
+### Bug Fixes
+
+* address trieloff PR UX feedback on auth, sync, and modal CTAs ([0d83fe5](https://github.com/adobe/aem-desktop/commit/0d83fe5695d76a44a5f094af0ab8e5fb8dd26e28))
+* use admin PAT for semantic-release push to bypass main ruleset ([6107016](https://github.com/adobe/aem-desktop/commit/6107016443921dfec2b652962248cf872cb2c41c))
+
+
+### Features
+
+* add DA site browser with live preview and local sync ([a87b796](https://github.com/adobe/aem-desktop/commit/a87b7961abf48a0e46058f2bf97e6950c46c0be4))
+
 ## [1.1.4](https://github.com/adobe/aem-desktop/compare/v1.1.3...v1.1.4) (2026-06-05)
 
 
