@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
-  collectSyncedFoldersFromAem,
+  collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -192,6 +192,113 @@ test('checkSyncStatus includes syncedFolders from .aem layout', async () => {
     });
     assert.deepEqual(result.syncedFolders, ['/docs']);
     assert.equal(result.unchangedCount, 1);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('collectFolder lists nested files with parallel folder requests', async () => {
+  const listings = {
+    '/': [
+      { path: '/blog', ext: undefined },
+      { path: '/assets', ext: undefined },
+    ],
+    '/blog': [
+      { path: '/blog/post.html', ext: 'html', lastModified: '2026-01-01T00:00:00Z' },
+    ],
+    '/assets': [
+      { path: '/assets/logo.png', ext: 'png', lastModified: '2026-01-01T00:00:00Z' },
+    ],
+  };
+  let peakConcurrent = 0;
+  let inFlight = 0;
+  const client = {
+    list: async (_org, _repo, folderPath) => {
+      inFlight += 1;
+      peakConcurrent = Math.max(peakConcurrent, inFlight);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5);
+      });
+      inFlight -= 1;
+      return listings[folderPath] || [];
+    },
+  };
+
+  const progress = [];
+  const files = await collectFolder(
+    client,
+    'org',
+    'repo',
+    '/',
+    true,
+    undefined,
+    ({ discovered }) => progress.push(discovered),
+  );
+
+  assert.equal(files.length, 2);
+  assert.deepEqual(
+    files.map((f) => f.daPath).sort(),
+    ['/assets/logo.png', '/blog/post.html'],
+  );
+  assert.equal(peakConcurrent, 2, 'subfolders should be listed in parallel');
+  assert.deepEqual(progress, [1, 2]);
+});
+
+test('collectFolder skips binaries when includeBinaries is false', async () => {
+  const client = {
+    list: async () => ([
+      { path: '/index.html', ext: 'html' },
+      { path: '/photo.png', ext: 'png' },
+    ]),
+  };
+
+  const files = await collectFolder(client, 'org', 'repo', '/', false);
+  assert.deepEqual(files.map((f) => f.daPath), ['/index.html']);
+});
+
+test('checkLocalSyncBadges marks synced folders from .aem layout', async () => {
+  const dest = join(tmpdir(), `aem-local-badges-${Date.now()}`);
+  try {
+    await mkdir(join(dest, 'o', 'r', '.aem', 'docs'), { recursive: true });
+
+    const { syncedFolders, badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+    });
+
+    assert.deepEqual(syncedFolders, ['/docs']);
+    assert.equal(badges['/docs'], 'synced');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('checkLocalSyncBadges classifies listed files from manifest', async () => {
+  const dest = join(tmpdir(), `aem-local-file-badges-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(workDir, 'page.html'), 'edited');
+    await writeFile(join(aemDir, 'page.html'), 'original');
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      files: [{ daPath: '/page.html', lastModified: '2026-01-01T00:00:00Z' }],
+    }));
+
+    const { badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/',
+      items: [{
+        daPath: '/page.html',
+        isFolder: false,
+        lastModified: '2026-01-01T00:00:00Z',
+      }],
+    });
+
+    assert.equal(badges['/page.html'], 'modified');
   } finally {
     await rm(dest, { recursive: true, force: true });
   }

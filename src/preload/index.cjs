@@ -31,12 +31,17 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
+  buildAemPreviewUrls: (siteId, daPaths) => ipcRenderer.invoke(
+    'preview:build-aem-urls',
+    { siteId, daPaths },
+  ),
   setActivePreviewSite: (siteId) => ipcRenderer.invoke('preview:set-active-site', { siteId }),
 
   pickSyncFolder: () => ipcRenderer.invoke('sync:pick-folder'),
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),
   setSyncFolder: (destFolder) => ipcRenderer.invoke('sync:set-folder', { destFolder }),
   checkSync: (options) => ipcRenderer.invoke('sync:check', options),
+  getLocalSyncBadges: (options) => ipcRenderer.invoke('sync:local-badges', options),
   runSync: (options) => ipcRenderer.invoke('sync:run', options),
   cancelSync: () => ipcRenderer.invoke('sync:cancel'),
   revealSync: (folderPath) => ipcRenderer.invoke('sync:reveal', { folderPath }),
@@ -44,6 +49,11 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('sync:progress', handler);
     return () => ipcRenderer.removeListener('sync:progress', handler);
+  },
+  onSyncCheckProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('sync:check-progress', handler);
+    return () => ipcRenderer.removeListener('sync:check-progress', handler);
   },
 
   checkPush: (options) => ipcRenderer.invoke('push:check', options),
