@@ -161,6 +161,108 @@ export async function collectSyncedFoldersFromAem(destRoot, org, repo) {
 }
 
 /**
+ * Local-only sync badges for the content tree (no remote DA listing).
+ * Folder "synced" badges come from `.aem` layout; file badges use the manifest,
+ * on-disk copies, and optional `lastModified` from a single list response.
+ *
+ * @param {{
+ *   destRoot: string,
+ *   org: string,
+ *   repo: string,
+ *   folderPath?: string,
+ *   items?: Array<{ daPath: string, isFolder?: boolean, lastModified?: string }>,
+ * }} options
+ * @returns {Promise<{ syncedFolders: string[], badges: Record<string, string> }>}
+ */
+export async function checkLocalSyncBadges({
+  destRoot, org, repo, folderPath, items = [],
+}) {
+  const syncedFolders = await collectSyncedFoldersFromAem(destRoot, org, repo);
+  /** @type {Record<string, string>} */
+  const badges = {};
+  for (const folder of syncedFolders) {
+    badges[folder] = 'synced';
+  }
+
+  let manifestMap = new Map();
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath(destRoot, org, repo), 'utf8'));
+    for (const f of manifest.files || []) {
+      manifestMap.set(f.daPath, f);
+    }
+  } catch {
+    manifestMap = new Map();
+  }
+
+  /** @type {Promise<void>[]} */
+  const itemChecks = [];
+
+  for (const item of items) {
+    if (item.isFolder) {
+      continue; // eslint-disable-line no-continue
+    }
+
+    const prev = manifestMap.get(item.daPath);
+    if (!prev) {
+      itemChecks.push((async () => {
+        const { workingPath } = syncPaths(destRoot, org, repo, item.daPath);
+        const workingMtime = await fileMtime(workingPath);
+        if (workingMtime) {
+          badges[item.daPath] = 'new';
+        }
+      })());
+      continue; // eslint-disable-line no-continue
+    }
+
+    itemChecks.push((async () => {
+      const paths = syncPaths(destRoot, org, repo, item.daPath);
+      const workingMtime = await fileMtime(paths.workingPath);
+      if (!workingMtime) {
+        badges[item.daPath] = 'deleted';
+        return;
+      }
+
+      const origBuf = await safeReadFile(paths.originalPath);
+      const workBuf = await safeReadFile(paths.workingPath);
+      const localModified = origBuf && workBuf && !origBuf.equals(workBuf);
+
+      const hasTimestamps = item.lastModified && prev.lastModified;
+      const remoteChanged = hasTimestamps
+        ? String(item.lastModified) !== String(prev.lastModified)
+        : item.lastModified && !prev.lastModified;
+
+      if (localModified && remoteChanged) {
+        badges[item.daPath] = 'conflict';
+      } else if (localModified) {
+        badges[item.daPath] = 'modified';
+      } else if (remoteChanged) {
+        badges[item.daPath] = 'outdated';
+      } else {
+        badges[item.daPath] = 'synced';
+      }
+    })());
+  }
+
+  await Promise.all(itemChecks);
+
+  if (folderPath !== undefined) {
+    const root = syncRoot(destRoot, org, repo);
+    const segs = folderPath === '/' ? [] : folderPath.split('/').filter(Boolean);
+    const localDir = join(root, ...segs);
+    const localFiles = await walkLocalDir(localDir);
+    for (const localPath of localFiles) {
+      const rel = relative(root, localPath);
+      const daPath = `/${rel}`;
+      if (!manifestMap.has(daPath) && !badges[daPath]) {
+        badges[daPath] = 'new';
+      }
+    }
+  }
+
+  return { syncedFolders, badges };
+}
+
+/**
  * Reads the existing manifest and compares remote file states against
  * local copies to classify each file as new, updated, conflicted,
  * deleted locally, or local-only (exists on disk but not on remote).
@@ -306,39 +408,100 @@ export async function checkSyncStatus({
 }
 
 /**
- * Recursively collects all files under a DA folder.
+ * Recursively collects all files under a DA folder (up to CONCURRENCY parallel list calls).
+ *
+ * @param {import('./da-api.js').DaClient} client
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} daPath
+ * @param {boolean} includeBinaries
+ * @param {AbortSignal} [signal]
+ * @param {(data: { discovered: number }) => void} [onProgress]
+ * @returns {Promise<Array<{ daPath: string, ext: string, lastModified?: string }>>}
  */
-export async function collectFolder(client, org, repo, daPath, includeBinaries, signal) {
+export async function collectFolder(
+  client,
+  org,
+  repo,
+  daPath,
+  includeBinaries,
+  signal,
+  onProgress,
+) {
   if (signal?.aborted) {
     return [];
   }
-  const raw = await client.list(org, repo, daPath);
+
+  /** @type {Array<{ daPath: string, ext: string, lastModified?: string }>} */
   const files = [];
+  /** @type {string[]} */
+  const folderQueue = [daPath];
+  let nextFolderIndex = 0;
+  let inFlight = 0;
 
-  for (const entry of raw) {
-    if (signal?.aborted) {
-      return files;
-    }
-    const entryDaPath = toDaPath(entry.path, org, repo);
-    const isFolder = entry.ext === undefined;
+  const reportProgress = () => {
+    onProgress?.({ discovered: files.length });
+  };
 
-    if (isFolder) {
-      // eslint-disable-next-line no-await-in-loop
-      const children = await collectFolder(client, org, repo, entryDaPath, includeBinaries, signal);
-      files.push(...children);
-    } else {
-      if (!includeBinaries && isBinaryExtension(entry.ext)) {
-        continue; // eslint-disable-line no-continue
+  const listOneFolder = async (folderPath) => {
+    const raw = await client.list(org, repo, folderPath);
+    /** @type {string[]} */
+    const subfolders = [];
+    for (const entry of raw) {
+      if (signal?.aborted) {
+        return subfolders;
       }
-      files.push({
-        daPath: entryDaPath,
-        ext: entry.ext,
-        lastModified: entry.lastModified,
-      });
+      const entryDaPath = toDaPath(entry.path, org, repo);
+      if (entry.ext === undefined) {
+        subfolders.push(entryDaPath);
+      } else if (includeBinaries || !isBinaryExtension(entry.ext)) {
+        files.push({
+          daPath: entryDaPath,
+          ext: entry.ext,
+          lastModified: entry.lastModified,
+        });
+        reportProgress();
+      }
     }
-  }
+    return subfolders;
+  };
 
-  return files;
+  return new Promise((resolve, reject) => {
+    /** @type {() => void} */
+    let pump;
+
+    const onFolderListed = (subfolders) => {
+      folderQueue.push(...subfolders);
+      inFlight -= 1;
+      if (nextFolderIndex >= folderQueue.length && inFlight === 0) {
+        resolve(files);
+        return;
+      }
+      pump();
+    };
+
+    pump = () => {
+      if (signal?.aborted) {
+        resolve(files);
+        return;
+      }
+
+      while (inFlight < CONCURRENCY && nextFolderIndex < folderQueue.length) {
+        const folderPath = folderQueue[nextFolderIndex];
+        nextFolderIndex += 1;
+        inFlight += 1;
+        listOneFolder(folderPath)
+          .then(onFolderListed)
+          .catch(reject);
+      }
+
+      if (folderQueue.length === 0 && inFlight === 0) {
+        resolve(files);
+      }
+    };
+
+    pump();
+  });
 }
 
 /**
@@ -400,8 +563,23 @@ export async function runSync({
       throw new Error('Sync cancelled');
     }
     if (item.isFolder) {
+      const base = filesToSync.length;
       // eslint-disable-next-line no-await-in-loop
-      const children = await collectFolder(client, org, repo, item.daPath, includeBinaries, signal);
+      const children = await collectFolder(
+        client,
+        org,
+        repo,
+        item.daPath,
+        includeBinaries,
+        signal,
+        ({ discovered }) => {
+          onProgress({
+            phase: 'listing',
+            discovered: base + discovered,
+            total: 0,
+          });
+        },
+      );
       filesToSync.push(...children);
     } else {
       if (!includeBinaries && isBinaryExtension(item.ext)) {

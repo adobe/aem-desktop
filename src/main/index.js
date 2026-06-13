@@ -29,13 +29,15 @@ import {
 } from './site-store.js';
 import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
 import { formatContentForDisplay } from './content-format.js';
-import { buildProxyPreviewUrl } from './preview-url.js';
+import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
 import { startPreviewServer } from './preview-server.js';
+import { createPreviewServerRegistry } from './preview-server-registry.js';
 import { createHeadHtmlCache } from './head-html.js';
 import {
   runSync, syncRoot, checkSyncStatus,
   collectFolder, isBinaryExtension,
   checkPushStatus, runPush, computePushDiffs,
+  checkLocalSyncBadges,
 } from './da-sync.js';
 import log from './logger.js';
 
@@ -54,18 +56,8 @@ const SYNC_FOLDER_FILENAME = 'sync-folder.json';
 
 let mainWindow;
 let sitesCache = [];
-let previewServerBase = null;
-let activePreviewSiteId = null;
-/** @type {ReturnType<typeof createHeadHtmlCache>|null} */
-let previewHeadHtmlCache = null;
-
-function setActivePreviewSite(siteId) {
-  if (activePreviewSiteId === siteId) {
-    return;
-  }
-  activePreviewSiteId = siteId || null;
-  previewHeadHtmlCache?.clear();
-}
+/** @type {ReturnType<typeof createPreviewServerRegistry>|null} */
+let previewRegistry = null;
 
 function userDataPath(name) {
   return join(app.getPath('userData'), name);
@@ -93,6 +85,42 @@ async function ensureSitesLoaded() {
 async function persistSites(sites) {
   sitesCache = sites;
   await saveSites(sitesPath(), sites);
+}
+
+async function resolvePreviewSite(siteId) {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    return null;
+  }
+  return {
+    org: site.org,
+    repo: site.repo,
+    previewUrl: site.previewUrl,
+  };
+}
+
+async function setActivePreviewSite(siteId) {
+  if (!previewRegistry) {
+    throw new Error('Preview proxy is not ready');
+  }
+
+  if (!siteId) {
+    await previewRegistry.activateSite(null, null);
+    return;
+  }
+
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  await previewRegistry.activateSite(siteId, {
+    org: site.org,
+    repo: site.repo,
+    previewUrl: site.previewUrl,
+  });
 }
 
 async function withDaClient(fn) {
@@ -150,19 +178,29 @@ ipcMain.handle('preview:build-url', async (_event, { siteId, daPath }) => {
   if (!site) {
     throw new Error('Site not found');
   }
+  await setActivePreviewSite(siteId);
+  const previewServerBase = previewRegistry?.getBaseUrl();
   if (!previewServerBase) {
     throw new Error('Preview proxy is not ready');
   }
-  setActivePreviewSite(siteId);
   return buildProxyPreviewUrl(previewServerBase, daPath);
 });
 
 ipcMain.handle('preview:set-active-site', async (_event, { siteId }) => {
+  if (siteId) {
+    await setActivePreviewSite(siteId);
+    return;
+  }
+  await setActivePreviewSite(null);
+});
+
+ipcMain.handle('preview:build-aem-urls', async (_event, { siteId, daPaths }) => {
   const sites = await ensureSitesLoaded();
-  if (siteId && !findSite(sites, siteId)) {
+  const site = findSite(sites, siteId);
+  if (!site) {
     throw new Error('Site not found');
   }
-  setActivePreviewSite(siteId || null);
+  return daPaths.map((daPath) => buildPreviewUrl(site.previewUrl, daPath));
 });
 
 ipcMain.handle('sites:list', async () => {
@@ -265,7 +303,7 @@ ipcMain.handle('sync:pick-folder', async () => {
   return folder;
 });
 
-ipcMain.handle('sync:check', async (_event, {
+ipcMain.handle('sync:check', async (event, {
   siteId, items, destFolder, includeBinaries,
 }) => {
   const sites = await ensureSitesLoaded();
@@ -276,17 +314,37 @@ ipcMain.handle('sync:check', async (_event, {
 
   return withDaClient(async (client) => {
     const allFiles = [];
+    const reportProgress = (discovered) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('sync:check-progress', { discovered });
+      }
+    };
+
     for (const item of items) {
       if (item.isFolder) {
+        const base = allFiles.length;
         // eslint-disable-next-line no-await-in-loop
-        const children = await collectFolder(client, site.org, site.repo, item.daPath, true);
+        const children = await collectFolder(
+          client,
+          site.org,
+          site.repo,
+          item.daPath,
+          includeBinaries,
+          undefined,
+          ({ discovered }) => reportProgress(base + discovered),
+        );
         allFiles.push(...children);
       } else {
+        if (!includeBinaries && isBinaryExtension(item.ext)) {
+          // eslint-disable-next-line no-continue
+          continue;
+        }
         allFiles.push({
           daPath: item.daPath,
           ext: item.ext,
           lastModified: item.lastModified,
         });
+        reportProgress(allFiles.length);
       }
     }
 
@@ -361,6 +419,24 @@ ipcMain.handle('sync:cancel', () => {
 
 ipcMain.handle('sync:reveal', (_event, { folderPath }) => {
   shell.showItemInFolder(folderPath);
+});
+
+ipcMain.handle('sync:local-badges', async (_event, {
+  siteId, destFolder, folderPath, items,
+}) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  return checkLocalSyncBadges({
+    destRoot: destFolder,
+    org: site.org,
+    repo: site.repo,
+    folderPath,
+    items,
+  });
 });
 
 let pushAbortController = null;
@@ -464,28 +540,13 @@ ipcMain.handle('dev:capture-screenshot', async (event) => {
 });
 
 app.whenReady().then(async () => {
-  previewHeadHtmlCache = createHeadHtmlCache();
-  const previewServer = await startPreviewServer({
-    log,
-    headHtmlCache: previewHeadHtmlCache,
-    getActiveSite: async () => {
-      if (!activePreviewSiteId) {
-        return null;
-      }
-      const sites = await ensureSitesLoaded();
-      const site = findSite(sites, activePreviewSiteId);
-      if (!site) {
-        return null;
-      }
-      return {
-        org: site.org,
-        repo: site.repo,
-        previewUrl: site.previewUrl,
-      };
-    },
+  previewRegistry = createPreviewServerRegistry({
+    startPreviewServer,
+    createHeadHtmlCache,
     getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
+    resolveActiveSite: resolvePreviewSite,
+    log,
   });
-  previewServerBase = previewServer.baseUrl;
 
   await createWindow();
   initAutoUpdater({ isPackaged: app.isPackaged });
@@ -497,7 +558,7 @@ app.whenReady().then(async () => {
   });
 
   app.on('will-quit', () => {
-    previewServer.close().catch(() => {});
+    previewRegistry?.closeAll().catch(() => {});
   });
 });
 

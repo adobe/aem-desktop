@@ -103,6 +103,7 @@ const els = {
   reviewProgress: document.getElementById('review-progress'),
   reviewProgressFill: document.getElementById('review-progress-fill'),
   reviewProgressText: document.getElementById('review-progress-text'),
+  reviewCopyPreviewUrls: document.getElementById('review-copy-preview-urls'),
 };
 
 function activeSite() {
@@ -445,7 +446,7 @@ async function loadFolder(daPath) {
   try {
     const items = await window.aemDesktop.listDa(state.activeSiteId, daPath);
     state.tree.cache[daPath] = items;
-    injectLocalFilesForFolder(daPath);
+    await refreshLocalBadgesForFolder(daPath);
   } catch (err) {
     if (daPath === '/') {
       state.tree.error = err.message || 'Failed to list folder';
@@ -505,8 +506,9 @@ function collapseFolder(daPath) {
 async function refreshTree() {
   paintFileTree();
   if (state.activeSiteId && state.authenticated) {
+    await refreshSyncedFolderBadges();
     await loadFolder('/');
-    autoSyncCheck();
+    checkPushStatus();
   }
 }
 
@@ -528,23 +530,60 @@ async function hardRefresh() {
   autoSyncCheck();
 }
 
-function autoSyncCheck() {
+async function refreshSyncedFolderBadges() {
   if (!syncFolder || !state.activeSiteId || !state.authenticated) {
     return;
   }
   const siteId = state.activeSiteId;
-  window.aemDesktop.checkSync({
-    siteId,
-    items: [{ daPath: '/', isFolder: true }],
-    destFolder: syncFolder,
-    includeBinaries: true,
-  }).then((status) => {
+  try {
+    const { badges } = await window.aemDesktop.getLocalSyncBadges({
+      siteId,
+      destFolder: syncFolder,
+    });
     if (state.activeSiteId !== siteId) {
       return;
     }
-    buildSyncBadges(status);
-  }).catch(() => {});
+    mergeSyncBadges(badges);
+  } catch {
+    // ignore — badges are best-effort in the tree
+  }
+}
 
+async function refreshLocalBadgesForFolder(daPath) {
+  if (!syncFolder || !state.activeSiteId) {
+    return;
+  }
+  const items = state.tree.cache[daPath];
+  if (!items) {
+    return;
+  }
+  const siteId = state.activeSiteId;
+  try {
+    const { badges } = await window.aemDesktop.getLocalSyncBadges({
+      siteId,
+      destFolder: syncFolder,
+      folderPath: daPath,
+      items: items.map((item) => ({
+        daPath: item.daPath,
+        isFolder: item.isFolder,
+        lastModified: item.lastModified,
+      })),
+    });
+    if (state.activeSiteId !== siteId) {
+      return;
+    }
+    mergeSyncBadges(badges);
+    injectLocalFilesForFolder(daPath);
+  } catch {
+    // ignore
+  }
+}
+
+function checkPushStatus() {
+  if (!syncFolder || !state.activeSiteId || !state.authenticated) {
+    return;
+  }
+  const siteId = state.activeSiteId;
   window.aemDesktop.checkPush({
     siteId,
     destFolder: syncFolder,
@@ -558,6 +597,21 @@ function autoSyncCheck() {
     state.tree.hasPushChanges = hasChanges;
     paintFileTree();
   }).catch(() => {});
+}
+
+function autoSyncCheck() {
+  refreshVisibleLocalBadges();
+  checkPushStatus();
+}
+
+async function refreshVisibleLocalBadges() {
+  await refreshSyncedFolderBadges();
+  for (const daPath of state.tree.expanded) {
+    if (state.tree.cache[daPath]) {
+      // eslint-disable-next-line no-await-in-loop
+      await refreshLocalBadgesForFolder(daPath);
+    }
+  }
 }
 
 async function refreshAuthStatus() {
@@ -911,31 +965,10 @@ function renderSyncStatus(status) {
   updateSyncStartEnabled();
 }
 
-function buildSyncBadges(status) {
-  const badges = new Map();
-  for (const p of (status.localNew || [])) {
-    badges.set(p, 'new');
-    injectLocalFile(p);
+function mergeSyncBadges(badges) {
+  for (const [p, type] of Object.entries(badges)) {
+    state.tree.syncBadges.set(p, type);
   }
-  for (const p of (status.modified || [])) {
-    badges.set(p, 'modified');
-  }
-  for (const p of (status.outdated || [])) {
-    badges.set(p, 'outdated');
-  }
-  for (const p of (status.conflicts || [])) {
-    badges.set(p, 'conflict');
-  }
-  for (const p of (status.unchanged || [])) {
-    badges.set(p, 'synced');
-  }
-  for (const p of (status.deletedLocally || [])) {
-    badges.set(p, 'deleted');
-  }
-  for (const p of (status.syncedFolders || [])) {
-    badges.set(p, 'synced');
-  }
-  state.tree.syncBadges = badges;
   paintFileTree();
 }
 
@@ -972,6 +1005,10 @@ function injectLocalFilesForFolder(folderPath) {
   }
 }
 
+function formatCheckingSummary(discovered) {
+  return `Checking… ${discovered.toLocaleString()} file${discovered === 1 ? '' : 's'} found`;
+}
+
 async function runSyncCheck() {
   if (!syncFolder || !state.activeSiteId) {
     syncTotalFiles = 0;
@@ -984,8 +1021,13 @@ async function runSyncCheck() {
     return;
   }
 
-  els.syncSelectionSummary.textContent = 'Checking…';
+  els.syncSelectionSummary.textContent = formatCheckingSummary(0);
   els.syncStart.disabled = true;
+
+  let removeCheckProgressListener = null;
+  removeCheckProgressListener = window.aemDesktop.onSyncCheckProgress(({ discovered }) => {
+    els.syncSelectionSummary.textContent = formatCheckingSummary(discovered);
+  });
 
   try {
     const items = getSelectedItems();
@@ -1016,6 +1058,11 @@ async function runSyncCheck() {
     hide(els.syncModifiedWarning);
     hide(els.syncConflictWarning);
     updateSyncStartEnabled();
+  } finally {
+    if (removeCheckProgressListener) {
+      removeCheckProgressListener();
+      removeCheckProgressListener = null;
+    }
   }
 }
 
@@ -1064,7 +1111,10 @@ async function pickSyncFolder() {
 
 function handleSyncProgress(data) {
   if (data.phase === 'listing') {
-    els.syncProgressText.textContent = 'Listing files…';
+    const discovered = data.discovered ?? 0;
+    els.syncProgressText.textContent = discovered > 0
+      ? `Listing… ${discovered.toLocaleString()} file${discovered === 1 ? '' : 's'} found`
+      : 'Listing files…';
     els.syncProgressFill.style.width = '0%';
   } else if (data.phase === 'downloading') {
     const pct = data.total > 0
@@ -1151,6 +1201,8 @@ async function startSync() {
 }
 
 let pushing = false;
+/** @type {string[]} */
+let lastPushedDaPaths = [];
 let reviewDiffs = [];
 /** @type {Set<string>} */
 let reviewSelectedPaths = new Set();
@@ -1328,35 +1380,68 @@ function applyReviewDiffs(diffs, { preserveSelection = false } = {}) {
 
 function resetReviewProgressUi() {
   hide(els.reviewProgress);
+  hide(els.reviewCopyPreviewUrls);
   els.reviewProgressFill.style.width = '0%';
   els.reviewProgressText.textContent = '';
+  els.reviewCopyPreviewUrls.textContent = 'Copy Preview URLs';
+  els.reviewCopyPreviewUrls.disabled = false;
   els.reviewCancel.textContent = 'Cancel';
+  lastPushedDaPaths = [];
   pushing = false;
 }
 
-async function refreshReviewChanges() {
-  if (!syncFolder || !state.activeSiteId) {
+async function reloadReviewAfterPush() {
+  const { empty, diffs } = await loadReviewChanges();
+  paintFileTree();
+
+  if (empty) {
+    reviewDiffs = [];
+    reviewSelectedPaths = new Set();
+    reviewCheckedPaths = new Set();
+    reviewFocusPath = null;
+    reviewAnchorPath = null;
+    paintReviewFileList();
+    renderReviewPlaceholder('All changes pushed');
+  } else {
+    applyReviewDiffs(diffs, { preserveSelection: true });
+  }
+
+  autoSyncCheck();
+}
+
+async function copyReviewPreviewUrls() {
+  if (!state.activeSiteId || lastPushedDaPaths.length === 0) {
     return;
   }
 
   try {
-    const { empty, diffs } = await loadReviewChanges();
-    paintFileTree();
-
-    if (empty) {
-      pushing = false;
-      closeReviewView();
-      return;
-    }
-
-    resetReviewProgressUi();
-    applyReviewDiffs(diffs, { preserveSelection: true });
-    autoSyncCheck();
-  } catch (err) {
-    renderReviewPlaceholder(err.message || 'Failed to reload changes');
-    resetReviewProgressUi();
-    updateReviewPushButton();
+    const urls = await window.aemDesktop.buildAemPreviewUrls(
+      state.activeSiteId,
+      lastPushedDaPaths,
+    );
+    await navigator.clipboard.writeText(urls.join('\n'));
+    els.reviewCopyPreviewUrls.textContent = 'Copied!';
+    window.setTimeout(() => {
+      if (els.reviewCopyPreviewUrls.textContent === 'Copied!') {
+        els.reviewCopyPreviewUrls.textContent = 'Copy Preview URLs';
+      }
+    }, 2000);
+  } catch {
+    els.reviewCopyPreviewUrls.textContent = 'Copy failed';
   }
+}
+
+function handleReviewCancelClick() {
+  if (els.reviewCancel.textContent === 'Done') {
+    resetReviewProgressUi();
+    if (reviewDiffs.length === 0) {
+      closeReviewView();
+    } else {
+      updateReviewPushButton();
+    }
+    return;
+  }
+  closeReviewView();
 }
 
 async function openPushModal() {
@@ -1374,6 +1459,7 @@ async function openPushModal() {
   els.reviewPush.textContent = 'Push changes';
   els.reviewCancel.textContent = 'Cancel';
   hide(els.reviewProgress);
+  hide(els.reviewCopyPreviewUrls);
   els.reviewProgressFill.style.width = '0%';
   els.reviewProgressText.textContent = '';
   renderReviewPlaceholder('Loading changes…');
@@ -1420,7 +1506,7 @@ function closeReviewView() {
     removePushProgressListener();
     removePushProgressListener = null;
   }
-  pushing = false;
+  resetReviewProgressUi();
   reviewDiffs = [];
   reviewSelectedPaths = new Set();
   reviewAnchorPath = null;
@@ -1449,6 +1535,11 @@ function handlePushProgress(data) {
     pushing = false;
     updateReviewPushButton({ forceDisabled: true });
     els.reviewCancel.textContent = 'Done';
+    if (lastPushedDaPaths.length > 0) {
+      show(els.reviewCopyPreviewUrls);
+    } else {
+      hide(els.reviewCopyPreviewUrls);
+    }
   }
 }
 
@@ -1472,6 +1563,9 @@ async function startPush() {
     .filter((d) => d.status === 'deleted')
     .map((d) => d.daPath);
 
+  lastPushedDaPaths = filesToPush;
+  hide(els.reviewCopyPreviewUrls);
+
   try {
     const result = await window.aemDesktop.runPush({
       siteId: state.activeSiteId,
@@ -1481,13 +1575,16 @@ async function startPush() {
     });
 
     if (result.cancelled) {
+      lastPushedDaPaths = [];
       els.reviewProgressText.textContent = 'Cancelled';
       els.reviewProgressFill.style.width = '0%';
     } else {
-      await refreshReviewChanges();
+      await reloadReviewAfterPush();
     }
   } catch (err) {
+    lastPushedDaPaths = [];
     els.reviewProgressText.textContent = err.message || 'Push failed';
+    hide(els.reviewCopyPreviewUrls);
   } finally {
     pushing = false;
     if (removePushProgressListener) {
@@ -1624,7 +1721,8 @@ function wireUi() {
   });
 
   els.reviewPush.addEventListener('click', startPush);
-  els.reviewCancel.addEventListener('click', closeReviewView);
+  els.reviewCancel.addEventListener('click', handleReviewCancelClick);
+  els.reviewCopyPreviewUrls.addEventListener('click', copyReviewPreviewUrls);
   wireReviewKeyboard(els.reviewFileContainer, {
     onSelect: focusReviewFile,
     onSelectAll: selectAllReviewFiles,
