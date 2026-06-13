@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   openAppDevTools: () => ipcRenderer.invoke('dev:open-app-devtools'),
 
   listSites: () => ipcRenderer.invoke('sites:list'),
-  addSite: (url) => ipcRenderer.invoke('sites:add', { url }),
+  addSite: (url, apiBackend) => ipcRenderer.invoke('sites:add', { url, apiBackend }),
   removeSite: (id) => ipcRenderer.invoke('sites:remove', { id }),
 
   getDaAuthStatus: () => ipcRenderer.invoke('da:auth-status'),
