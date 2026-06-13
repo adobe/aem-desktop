@@ -278,7 +278,16 @@ body {
   margin-bottom: 0.75rem;
 }
 
-.add-site-form input {
+.api-backend-option {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.add-site-form input[type="url"] {
   -webkit-app-region: no-drag;
   font: inherit;
   font-size: 0.85rem;
@@ -289,7 +298,7 @@ body {
   color: var(--fg);
 }
 
-.add-site-form input:focus {
+.add-site-form input[type="url"]:focus {
   outline: 1px solid var(--accent);
   border-color: var(--accent);
 }
@@ -302,6 +311,12 @@ body {
 .error {
   font-size: 0.8rem;
   color: var(--accent);
+}
+
+.site-backend {
+  font-size: 0.7rem;
+  color: var(--muted, #666);
+  margin-left: 0.35rem;
 }
 
 .site-item {

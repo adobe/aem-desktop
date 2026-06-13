@@ -20,7 +20,7 @@ import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
 import { screenshotFilename } from './dev-config.js';
 import { toDaPath } from './aem-page-url.js';
-import { DaClient } from './da-api.js';
+import { DaClient, API_BACKEND_DA_LIVE } from './da-api.js';
 import {
   DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
 } from './da-auth.js';
@@ -123,12 +123,13 @@ async function setActivePreviewSite(siteId) {
   });
 }
 
-async function withDaClient(fn) {
+async function withDaClient(site, fn) {
   const accessToken = await getValidToken({
     tokenPath: tokenPath(),
     openBrowser: (url) => shell.openExternal(url),
   });
-  return fn(new DaClient(accessToken));
+  const backend = site.apiBackend || API_BACKEND_DA_LIVE;
+  return fn(new DaClient(accessToken, backend));
 }
 
 async function createWindow() {
@@ -208,9 +209,9 @@ ipcMain.handle('sites:list', async () => {
   return sitesCache;
 });
 
-ipcMain.handle('sites:add', async (_event, { url }) => {
+ipcMain.handle('sites:add', async (_event, { url, apiBackend }) => {
   const sites = await ensureSitesLoaded();
-  const { site, sites: next } = addSiteFromUrl(sites, url);
+  const { site, sites: next } = addSiteFromUrl(sites, url, apiBackend);
   await persistSites(next);
   return site;
 });
@@ -241,7 +242,7 @@ ipcMain.handle('da:list', async (_event, { siteId, daPath = '/' }) => {
     throw new Error('Site not found');
   }
 
-  return withDaClient(async (client) => {
+  return withDaClient(site, async (client) => {
     const items = await client.list(site.org, site.repo, daPath);
     return items.map((item) => ({
       ...item,
@@ -258,7 +259,7 @@ ipcMain.handle('da:get-source', async (_event, { siteId, daPath }) => {
     throw new Error('Site not found');
   }
 
-  return withDaClient(async (client) => {
+  return withDaClient(site, async (client) => {
     const result = await client.getSource(site.org, site.repo, daPath);
     if (!result) {
       return null;
@@ -312,7 +313,7 @@ ipcMain.handle('sync:check', async (event, {
     throw new Error('Site not found');
   }
 
-  return withDaClient(async (client) => {
+  return withDaClient(site, async (client) => {
     const allFiles = [];
     const reportProgress = (discovered) => {
       if (!event.sender.isDestroyed()) {
@@ -380,7 +381,7 @@ ipcMain.handle('sync:run', async (event, {
     const skip = skipConflicts?.length
       ? new Set(skipConflicts)
       : undefined;
-    const manifest = await withDaClient((client) => runSync({
+    const manifest = await withDaClient(site, (client) => runSync({
       client,
       org: site.org,
       repo: site.repo,
@@ -470,7 +471,7 @@ ipcMain.handle('push:run', async (event, {
   const { signal } = pushAbortController;
 
   try {
-    const result = await withDaClient((client) => runPush({
+    const result = await withDaClient(site, (client) => runPush({
       client,
       org: site.org,
       repo: site.repo,

@@ -10,13 +10,25 @@
  * governing permissions and limitations under the License.
  */
 
-export const DA_ADMIN = 'https://admin.da.live';
+export const API_BACKEND_DA_LIVE = 'da.live';
+export const API_BACKEND_AEM_API = 'api.aem.live';
 
-/** Response header used to page past the per-request list limit. */
+export const DA_ADMIN = 'https://admin.da.live';
+export const AEM_API_BASE = 'https://api.aem.live';
+
+/** Response header used to page past the per-request list limit (da.live only). */
 export const LIST_CONTINUATION_HEADER = 'da-continuation-token';
 
 const LIST_MAX_PAGES = 50000;
 const MAX_ERROR_BODY_LEN = 500;
+
+/**
+ * @param {string} backend
+ * @returns {boolean}
+ */
+export function isValidApiBackend(backend) {
+  return backend === API_BACKEND_DA_LIVE || backend === API_BACKEND_AEM_API;
+}
 
 /**
  * @param {string} method
@@ -80,15 +92,128 @@ export function normalizeDaPath(daPath) {
 }
 
 /**
- * HTTP client for the DA admin API (list + source).
+ * Repo-relative path without a leading slash (empty string for root).
+ *
+ * @param {string} daPath
+ * @returns {string}
+ */
+export function toApiRelativePath(daPath) {
+  const normalized = normalizeDaPath(daPath);
+  if (normalized === '/') {
+    return '';
+  }
+  return normalized.slice(1);
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} daPath
+ * @returns {string}
+ */
+export function buildDaLiveListUrl(org, repo, daPath) {
+  const normalized = normalizeDaPath(daPath);
+  return `${DA_ADMIN}/list/${org}/${repo}${normalized === '/' ? '/' : normalized}`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} daPath
+ * @returns {string}
+ */
+export function buildDaLiveSourceUrl(org, repo, daPath) {
+  const normalized = normalizeDaPath(daPath);
+  return `${DA_ADMIN}/source/${org}/${repo}${normalized}`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} daPath
+ * @returns {string}
+ */
+export function buildAemApiListUrl(org, repo, daPath) {
+  const rel = toApiRelativePath(daPath);
+  const base = `${AEM_API_BASE}/${org}/sites/${repo}/source`;
+  if (!rel) {
+    return `${base}/`;
+  }
+  return `${base}/${rel}/`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} daPath
+ * @returns {string}
+ */
+export function buildAemApiSourceUrl(org, repo, daPath) {
+  const rel = toApiRelativePath(daPath);
+  const base = `${AEM_API_BASE}/${org}/sites/${repo}/source`;
+  if (!rel) {
+    return base;
+  }
+  return `${base}/${rel}`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} parentDaPath
+ * @param {string} name
+ * @returns {string}
+ */
+function fullListEntryPath(org, repo, parentDaPath, name) {
+  const parent = normalizeDaPath(parentDaPath);
+  const rel = parent === '/' ? `/${name}` : `${parent}/${name}`;
+  return `/${org}/${repo}${rel}`;
+}
+
+/**
+ * @param {object} entry
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} parentDaPath
+ * @returns {{ path: string, name: string, ext?: string, lastModified?: string }}
+ */
+export function normalizeAemApiListEntry(entry, org, repo, parentDaPath) {
+  const rawName = entry.name || '';
+  const isFolder = entry['content-type'] === 'application/folder' || rawName.endsWith('/');
+  const fileName = rawName.endsWith('/') ? rawName.slice(0, -1) : rawName;
+  const path = fullListEntryPath(org, repo, parentDaPath, fileName);
+
+  if (isFolder) {
+    return {
+      path,
+      name: fileName,
+      lastModified: entry['last-modified'] || entry.lastModified || undefined,
+    };
+  }
+
+  const dot = fileName.lastIndexOf('.');
+  const ext = dot >= 0 ? fileName.slice(dot + 1) : '';
+  const name = dot >= 0 ? fileName.slice(0, dot) : fileName;
+  return {
+    path,
+    name,
+    ext,
+    lastModified: entry['last-modified'] || entry.lastModified || undefined,
+  };
+}
+
+/**
+ * HTTP client for DA admin and AEM Admin API (list + source).
  */
 export class DaClient {
   /**
    * @param {string} token IMS Bearer token
+   * @param {string} [backend]
    * @param {typeof fetch} [fetchImpl]
    */
-  constructor(token, fetchImpl = globalThis.fetch) {
+  constructor(token, backend = API_BACKEND_DA_LIVE, fetchImpl = globalThis.fetch) {
     this.token = token;
+    this.backend = isValidApiBackend(backend) ? backend : API_BACKEND_DA_LIVE;
     this.fetch = fetchImpl;
   }
 
@@ -105,8 +230,21 @@ export class DaClient {
    * @returns {Promise<Array<{path: string, name: string, ext?: string, lastModified?: string}>>}
    */
   async list(org, repo, daPath) {
+    if (this.backend === API_BACKEND_AEM_API) {
+      return this.listAemApi(org, repo, daPath);
+    }
+    return this.listDaLive(org, repo, daPath);
+  }
+
+  /**
+   * @param {string} org
+   * @param {string} repo
+   * @param {string} daPath
+   * @returns {Promise<Array<{path: string, name: string, ext?: string, lastModified?: string}>>}
+   */
+  async listDaLive(org, repo, daPath) {
     const normalized = normalizeDaPath(daPath);
-    const url = `${DA_ADMIN}/list/${org}/${repo}${normalized === '/' ? '/' : normalized}`;
+    const url = buildDaLiveListUrl(org, repo, normalized);
     const aggregated = [];
     let continuation = null;
 
@@ -139,6 +277,29 @@ export class DaClient {
   }
 
   /**
+   * @param {string} org
+   * @param {string} repo
+   * @param {string} daPath
+   * @returns {Promise<Array<{path: string, name: string, ext?: string, lastModified?: string}>>}
+   */
+  async listAemApi(org, repo, daPath) {
+    const normalized = normalizeDaPath(daPath);
+    const url = buildAemApiListUrl(org, repo, normalized);
+    const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
+    if (res.status === 401) {
+      throw new Error('Unauthorized: invalid or expired token');
+    }
+    if (!res.ok) {
+      throw new Error(await formatHttpError('GET', url, res, `List failed for ${normalized}`));
+    }
+    const body = await res.json();
+    if (!Array.isArray(body)) {
+      throw new Error(`List response for ${normalized} must be a JSON array`);
+    }
+    return body.map((entry) => normalizeAemApiListEntry(entry, org, repo, normalized));
+  }
+
+  /**
    * Downloads raw file bytes (text or binary).
    *
    * @param {string} org
@@ -148,7 +309,9 @@ export class DaClient {
    */
   async downloadRaw(org, repo, daPath) {
     const normalized = normalizeDaPath(daPath);
-    const url = `${DA_ADMIN}/source/${org}/${repo}${normalized}`;
+    const url = this.backend === API_BACKEND_AEM_API
+      ? buildAemApiSourceUrl(org, repo, normalized)
+      : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
       throw new Error('Unauthorized: invalid or expired token');
@@ -175,7 +338,9 @@ export class DaClient {
    */
   async getSource(org, repo, daPath) {
     const normalized = normalizeDaPath(daPath);
-    const url = `${DA_ADMIN}/source/${org}/${repo}${normalized}`;
+    const url = this.backend === API_BACKEND_AEM_API
+      ? buildAemApiSourceUrl(org, repo, normalized)
+      : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
       throw new Error('Unauthorized: invalid or expired token');
@@ -202,7 +367,7 @@ export class DaClient {
   }
 
   /**
-   * Uploads a file to the DA source endpoint.
+   * Uploads a file to the source endpoint.
    *
    * @param {string} org
    * @param {string} repo
@@ -213,7 +378,9 @@ export class DaClient {
    */
   async uploadSource(org, repo, daPath, data, contentType) {
     const normalized = normalizeDaPath(daPath);
-    const url = `${DA_ADMIN}/source/${org}/${repo}${normalized}`;
+    const url = this.backend === API_BACKEND_AEM_API
+      ? buildAemApiSourceUrl(org, repo, normalized)
+      : buildDaLiveSourceUrl(org, repo, normalized);
     const body = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
     const res = await this.fetch(url, {
       method: 'PUT',
@@ -229,7 +396,7 @@ export class DaClient {
   }
 
   /**
-   * Deletes a file from the DA source endpoint.
+   * Deletes a file from the source endpoint.
    *
    * @param {string} org
    * @param {string} repo
@@ -238,7 +405,9 @@ export class DaClient {
    */
   async deleteSource(org, repo, daPath) {
     const normalized = normalizeDaPath(daPath);
-    const url = `${DA_ADMIN}/source/${org}/${repo}${normalized}`;
+    const url = this.backend === API_BACKEND_AEM_API
+      ? buildAemApiSourceUrl(org, repo, normalized)
+      : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, {
       method: 'DELETE',
       headers: this.authHeader,

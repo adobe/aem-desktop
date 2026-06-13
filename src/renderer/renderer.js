@@ -64,6 +64,7 @@ const els = {
   addSiteToggle: document.getElementById('add-site-toggle'),
   addSiteCancel: document.getElementById('add-site-cancel'),
   siteUrlInput: document.getElementById('site-url-input'),
+  useApiAemLive: document.getElementById('use-api-aem-live'),
   addSiteError: document.getElementById('add-site-error'),
   fileTree: document.getElementById('file-tree'),
   authStatus: document.getElementById('auth-status'),
@@ -183,7 +184,18 @@ function setError(message) {
 }
 
 function siteLabel(site) {
-  return `${site.org}/${site.repo}`;
+  const backend = site.apiBackend && site.apiBackend !== 'da.live' ? site.apiBackend : null;
+  return backend ? `${site.org}/${site.repo} (${backend})` : `${site.org}/${site.repo}`;
+}
+
+function selectedApiBackend() {
+  return els.useApiAemLive.checked ? 'api.aem.live' : 'da.live';
+}
+
+function resetAddSiteForm() {
+  els.siteUrlInput.value = '';
+  els.useApiAemLive.checked = false;
+  setError('');
 }
 
 function resetTree() {
@@ -242,20 +254,19 @@ function selectAllVisibleItems() {
 
 function renderAuthStatus() {
   if (state.authenticated) {
-    els.authStatus.textContent = 'Signed in to DA';
+    els.authStatus.textContent = 'Signed in to AEM';
     els.authStatus.classList.add('ok');
     hide(els.signInBtn);
     show(els.signOutBtn);
     els.addSiteToggle.disabled = false;
   } else {
-    els.authStatus.textContent = 'Sign in to DA to open a site';
+    els.authStatus.textContent = 'Sign in to AEM to open a site';
     els.authStatus.classList.remove('ok');
     show(els.signInBtn);
     hide(els.signOutBtn);
     els.addSiteToggle.disabled = true;
     hide(els.addSiteForm);
-    setError('');
-    els.siteUrlInput.value = '';
+    resetAddSiteForm();
   }
   renderSites();
 }
@@ -688,7 +699,7 @@ function renderSites() {
     btn.type = 'button';
     btn.className = 'site-btn';
     btn.disabled = !state.authenticated;
-    btn.title = state.authenticated ? '' : 'Sign in to DA to open this site';
+    btn.title = state.authenticated ? '' : 'Sign in to AEM to open this site';
     btn.innerHTML = `<span class="site-name">${siteLabel(site)}</span><span class="site-branch">${site.branch}</span>`;
     btn.addEventListener('click', () => selectSite(site.id));
 
@@ -731,9 +742,9 @@ async function handleAddSite(event) {
   }
 
   try {
-    const site = await window.aemDesktop.addSite(url);
+    const site = await window.aemDesktop.addSite(url, selectedApiBackend());
     state.sites = await window.aemDesktop.listSites();
-    els.siteUrlInput.value = '';
+    resetAddSiteForm();
     hide(els.addSiteForm);
     if (state.authenticated) {
       await enterBrowse(site.id);
@@ -1607,8 +1618,7 @@ function wireUi() {
 
   els.addSiteCancel.addEventListener('click', () => {
     hide(els.addSiteForm);
-    setError('');
-    els.siteUrlInput.value = '';
+    resetAddSiteForm();
   });
 
   els.addSiteForm.addEventListener('submit', handleAddSite);

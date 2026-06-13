@@ -144,7 +144,7 @@ export function waitForToken() {
 }
 
 /**
- * Returns a valid DA access token, triggering browser login when needed.
+ * Returns a valid AEM access token (IMS), triggering browser login when needed.
  *
  * @param {{ tokenPath: string, openBrowser: (url: string) => Promise<void>|void }} options
  * @returns {Promise<string>}
@@ -183,7 +183,7 @@ export async function getAuthStatus(tokenPath) {
 }
 
 /**
- * Removes the persisted DA token.
+ * Removes the persisted AEM token.
  *
  * @param {string} tokenPath
  */
