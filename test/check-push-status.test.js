@@ -14,10 +14,10 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  mkdir, writeFile, rm, copyFile,
+  mkdir, writeFile, rm, copyFile, readFile, stat,
 } from 'node:fs/promises';
 import {
-  checkPushStatus, syncPaths, manifestPath,
+  checkPushStatus, syncPaths, manifestPath, runRevert,
 } from '../src/main/da-sync.js';
 
 test('checkPushStatus reports remaining modified files after one is pushed', async () => {
@@ -86,6 +86,64 @@ test('checkPushStatus reports remaining localNew files after one is pushed', asy
     status = await checkPushStatus({ destRoot: dest, org, repo });
     assert.deepEqual(status.localNew, ['/b.html']);
     assert.equal(status.modified.length, 0);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('runRevert restores modified and deleted files from .aem with manifest mtime', async () => {
+  const dest = join(tmpdir(), `aem-revert-test-${Date.now()}`);
+  const org = 'o';
+  const repo = 'r';
+  const aemDir = join(dest, org, repo, '.aem');
+  const workDir = join(dest, org, repo);
+  const manifestMtime = '2026-03-15T12:00:00.000Z';
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(manifestPath(dest, org, repo), JSON.stringify({
+      org,
+      repo,
+      files: [
+        { daPath: '/a.html', lastModified: manifestMtime },
+        { daPath: '/b.html', lastModified: manifestMtime },
+      ],
+    }));
+    await writeFile(join(aemDir, 'a.html'), 'original a');
+    await writeFile(join(aemDir, 'b.html'), 'original b');
+    await writeFile(join(workDir, 'a.html'), 'modified a');
+    await rm(join(workDir, 'b.html'), { force: true });
+    await writeFile(join(workDir, 'c.html'), 'local only');
+
+    await runRevert({
+      destRoot: dest,
+      org,
+      repo,
+      files: [
+        { daPath: '/a.html', status: 'modified' },
+        { daPath: '/b.html', status: 'deleted' },
+        { daPath: '/c.html', status: 'new' },
+      ],
+      onProgress: () => {},
+    });
+
+    assert.equal(await readFile(join(workDir, 'a.html'), 'utf8'), 'original a');
+    assert.equal(await readFile(join(workDir, 'b.html'), 'utf8'), 'original b');
+
+    const aStat = await stat(join(workDir, 'a.html'));
+    assert.equal(aStat.mtime.toISOString(), manifestMtime);
+
+    let missing = false;
+    try {
+      await stat(join(workDir, 'c.html'));
+    } catch {
+      missing = true;
+    }
+    assert.equal(missing, true);
+
+    const status = await checkPushStatus({ destRoot: dest, org, repo });
+    assert.equal(status.modified.length, 0);
+    assert.equal(status.localNew.length, 0);
+    assert.equal(status.deleted.length, 0);
   } finally {
     await rm(dest, { recursive: true, force: true });
   }

@@ -47,6 +47,7 @@ const state = {
     focusAfterPaint: null,
     syncBadges: new Map(),
     hasPushChanges: false,
+    hasPullChanges: false,
   },
 };
 
@@ -95,10 +96,27 @@ const els = {
   syncConflictWarning: document.getElementById('sync-conflict-warning'),
   syncConflictText: document.getElementById('sync-conflict-text'),
   syncOverwriteConflicts: document.getElementById('sync-overwrite-conflicts'),
+  pullModal: document.getElementById('pull-modal'),
+  pullSummary: document.getElementById('pull-summary'),
+  pullFolderPath: document.getElementById('pull-folder-path'),
+  pullIncludeBinaries: document.getElementById('pull-include-binaries'),
+  pullEmptyNotice: document.getElementById('pull-empty-notice'),
+  pullFileSection: document.getElementById('pull-file-section'),
+  pullFileList: document.getElementById('pull-file-list'),
+  pullConflictWarning: document.getElementById('pull-conflict-warning'),
+  pullConflictText: document.getElementById('pull-conflict-text'),
+  pullConflictList: document.getElementById('pull-conflict-list'),
+  pullOverwriteConflicts: document.getElementById('pull-overwrite-conflicts'),
+  pullStart: document.getElementById('pull-start'),
+  pullCancel: document.getElementById('pull-cancel'),
+  pullProgress: document.getElementById('pull-progress'),
+  pullProgressFill: document.getElementById('pull-progress-fill'),
+  pullProgressText: document.getElementById('pull-progress-text'),
   reviewView: document.getElementById('review-view'),
   reviewFileContainer: document.getElementById('review-file-container'),
   reviewDiffBody: document.getElementById('review-diff-body'),
   reviewCancel: document.getElementById('review-cancel'),
+  reviewRevert: document.getElementById('review-revert'),
   reviewPush: document.getElementById('review-push'),
   reviewProgress: document.getElementById('review-progress'),
   reviewProgressFill: document.getElementById('review-progress-fill'),
@@ -196,6 +214,8 @@ function resetTree() {
     error: null,
     focusAfterPaint: null,
     syncBadges: new Map(),
+    hasPushChanges: false,
+    hasPullChanges: false,
   };
 }
 
@@ -410,11 +430,14 @@ function paintFileTree() {
     onToggleFolder: toggleFolder,
     onRowClick: handleRowClick,
     onRowDoubleClick: handleRowDoubleClick,
-    onPull: openSyncModal,
+    onSyncSelected: openSyncModal,
+    onPull: openPullModal,
     onPush: openPushModal,
     selectionCount: state.tree.selectedPaths.size,
     syncBadges: state.tree.syncBadges,
     hasPushChanges: state.tree.hasPushChanges,
+    hasPullChanges: state.tree.hasPullChanges,
+    canPull: Boolean(syncFolder),
   });
 
   const tree = els.fileTree.querySelector('[role="tree"]');
@@ -969,7 +992,272 @@ function mergeSyncBadges(badges) {
   for (const [p, type] of Object.entries(badges)) {
     state.tree.syncBadges.set(p, type);
   }
+  updatePullChangesFromBadges();
   paintFileTree();
+}
+
+function updatePullChangesFromBadges() {
+  let hasPullChanges = false;
+  for (const type of state.tree.syncBadges.values()) {
+    if (type === 'outdated' || type === 'conflict') {
+      hasPullChanges = true;
+      break;
+    }
+  }
+  state.tree.hasPullChanges = hasPullChanges;
+}
+
+let pulling = false;
+/** @type {string[]} */
+let pullOutdated = [];
+/** @type {string[]} */
+let pullConflicts = [];
+/** @type {Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>} */
+let pullFiles = [];
+let pullTotalCount = 0;
+let removePullProgressListener = null;
+let removePullCheckProgressListener = null;
+
+function resetPullModalState() {
+  pullOutdated = [];
+  pullConflicts = [];
+  pullFiles = [];
+  pullTotalCount = 0;
+  hide(els.pullProgress);
+  hide(els.pullEmptyNotice);
+  hide(els.pullFileSection);
+  hide(els.pullConflictWarning);
+  els.pullOverwriteConflicts.checked = false;
+  els.pullFileList.replaceChildren();
+  els.pullConflictList.replaceChildren();
+  els.pullProgressFill.style.width = '0%';
+  els.pullProgressText.textContent = '';
+  els.pullStart.textContent = 'Pull';
+  els.pullCancel.textContent = 'Cancel';
+  show(els.pullCancel);
+  pulling = false;
+}
+
+function updatePullFolderDisplay() {
+  if (syncFolder) {
+    els.pullFolderPath.textContent = syncFolder;
+    els.pullFolderPath.title = syncFolder;
+    els.pullFolderPath.classList.remove('no-folder');
+  } else {
+    els.pullFolderPath.textContent = 'No folder selected';
+    els.pullFolderPath.title = '';
+    els.pullFolderPath.classList.add('no-folder');
+  }
+}
+
+function updatePullStartEnabled() {
+  if (pulling || !syncFolder || pullTotalCount === 0) {
+    els.pullStart.disabled = true;
+    return;
+  }
+  const overwriteConflicts = els.pullOverwriteConflicts.checked;
+  const pullableCount = pullFiles.filter((file) => (
+    !file.conflict || overwriteConflicts
+  )).length;
+  els.pullStart.disabled = pullableCount === 0;
+}
+
+function renderPullStatus(status) {
+  pullOutdated = status.outdated || [];
+  pullConflicts = status.conflicts || [];
+  pullFiles = status.files || [];
+  pullTotalCount = status.totalCount || 0;
+
+  if (pullTotalCount === 0) {
+    els.pullSummary.textContent = 'Checking complete';
+    show(els.pullEmptyNotice);
+    hide(els.pullFileSection);
+    hide(els.pullConflictWarning);
+  } else {
+    const parts = [];
+    if (pullOutdated.length > 0) {
+      parts.push(`${pluralFiles(pullOutdated.length)} updated remotely`);
+    }
+    if (pullConflicts.length > 0) {
+      parts.push(`${pluralFiles(pullConflicts.length)} changed locally and remotely`);
+    }
+    els.pullSummary.textContent = parts.join(', ');
+    hide(els.pullEmptyNotice);
+    show(els.pullFileSection);
+    renderSyncPathList(els.pullFileList, pullFiles.map((f) => f.daPath));
+
+    if (pullConflicts.length > 0) {
+      els.pullConflictText.textContent = `${pluralFiles(pullConflicts.length)} changed both locally and remotely — skipped unless you choose to overwrite.`;
+      renderSyncPathList(els.pullConflictList, pullConflicts);
+      show(els.pullConflictWarning);
+    } else {
+      hide(els.pullConflictWarning);
+    }
+  }
+
+  updatePullStartEnabled();
+}
+
+function formatPullCheckingSummary(checked, total) {
+  if (total > 0) {
+    return `Checking… ${checked.toLocaleString()} / ${total.toLocaleString()} synced file${total === 1 ? '' : 's'}`;
+  }
+  return 'Checking for remote changes…';
+}
+
+async function runPullCheck() {
+  if (!syncFolder || !state.activeSiteId) {
+    pullTotalCount = 0;
+    updatePullStartEnabled();
+    hide(els.pullEmptyNotice);
+    hide(els.pullFileSection);
+    hide(els.pullConflictWarning);
+    els.pullSummary.textContent = 'Choose a local sync folder to pull remote changes.';
+    return;
+  }
+
+  els.pullSummary.textContent = formatPullCheckingSummary(0, 0);
+  els.pullStart.disabled = true;
+
+  if (removePullCheckProgressListener) {
+    removePullCheckProgressListener();
+  }
+  removePullCheckProgressListener = window.aemDesktop.onPullCheckProgress(({ checked, total }) => {
+    els.pullSummary.textContent = formatPullCheckingSummary(checked, total);
+  });
+
+  try {
+    const status = await window.aemDesktop.checkPull({
+      siteId: state.activeSiteId,
+      destFolder: syncFolder,
+      includeBinaries: els.pullIncludeBinaries.checked,
+    });
+
+    els.pullOverwriteConflicts.checked = false;
+    renderPullStatus(status);
+  } catch (err) {
+    pullTotalCount = 0;
+    els.pullSummary.textContent = err.message || 'Check failed';
+    hide(els.pullEmptyNotice);
+    hide(els.pullFileSection);
+    hide(els.pullConflictWarning);
+    updatePullStartEnabled();
+  } finally {
+    if (removePullCheckProgressListener) {
+      removePullCheckProgressListener();
+      removePullCheckProgressListener = null;
+    }
+  }
+}
+
+function openPullModal() {
+  resetPullModalState();
+  updatePullFolderDisplay();
+  show(els.pullModal);
+  runPullCheck();
+}
+
+function closePullModal() {
+  if (pulling) {
+    window.aemDesktop.cancelPull();
+  }
+  if (removePullProgressListener) {
+    removePullProgressListener();
+    removePullProgressListener = null;
+  }
+  if (removePullCheckProgressListener) {
+    removePullCheckProgressListener();
+    removePullCheckProgressListener = null;
+  }
+  pulling = false;
+  hide(els.pullModal);
+  if (syncFolder && state.activeSiteId) {
+    autoSyncCheck();
+  }
+}
+
+function handlePullProgress(data) {
+  if (data.phase === 'downloading') {
+    const pct = data.total > 0
+      ? Math.round((data.completed / data.total) * 100) : 0;
+    els.pullProgressFill.style.width = `${pct}%`;
+    const current = data.current ? displayPath(data.current) : '';
+    els.pullProgressText.textContent = `${data.completed} / ${data.total}  ${current}`;
+  } else if (data.phase === 'done') {
+    els.pullProgressFill.style.width = '100%';
+    els.pullProgressText.textContent = `Done — ${pluralFiles(data.total)} pulled`;
+    pulling = false;
+  }
+}
+
+function showPullCompleteActions() {
+  pulling = false;
+  els.pullStart.disabled = false;
+  els.pullStart.textContent = 'Close';
+  hide(els.pullCancel);
+}
+
+async function startPull() {
+  if (!syncFolder || !state.activeSiteId || pullTotalCount === 0) {
+    return;
+  }
+
+  const overwriteConflicts = els.pullOverwriteConflicts.checked;
+  const filesToPull = pullFiles.filter((file) => (
+    !file.conflict || overwriteConflicts
+  ));
+
+  if (filesToPull.length === 0) {
+    return;
+  }
+
+  pulling = true;
+  els.pullStart.disabled = true;
+  els.pullIncludeBinaries.disabled = true;
+  hide(els.pullEmptyNotice);
+  hide(els.pullFileSection);
+  hide(els.pullConflictWarning);
+  show(els.pullProgress);
+  els.pullProgressText.textContent = 'Starting…';
+
+  removePullProgressListener = window.aemDesktop.onPullProgress(handlePullProgress);
+
+  let pullSucceeded = false;
+  try {
+    const result = await window.aemDesktop.runPull({
+      siteId: state.activeSiteId,
+      destFolder: syncFolder,
+      files: filesToPull.map(({ daPath, lastModified, ext }) => ({
+        daPath,
+        lastModified,
+        ext,
+      })),
+    });
+
+    if (result.cancelled) {
+      els.pullProgressText.textContent = 'Cancelled';
+      els.pullProgressFill.style.width = '0%';
+      autoSyncCheck();
+    } else {
+      pullSucceeded = true;
+      autoSyncCheck();
+    }
+  } catch (err) {
+    els.pullProgressText.textContent = err.message || 'Pull failed';
+  } finally {
+    pulling = false;
+    els.pullIncludeBinaries.disabled = false;
+    if (removePullProgressListener) {
+      removePullProgressListener();
+      removePullProgressListener = null;
+    }
+    if (pullSucceeded) {
+      showPullCompleteActions();
+    } else {
+      els.pullCancel.textContent = 'Close';
+      updatePullStartEnabled();
+    }
+  }
 }
 
 function injectLocalFile(daPath) {
@@ -1201,6 +1489,7 @@ async function startSync() {
 }
 
 let pushing = false;
+let reverting = false;
 /** @type {string[]} */
 let lastPushedDaPaths = [];
 let reviewDiffs = [];
@@ -1211,6 +1500,7 @@ let reviewFocusPath = null;
 /** @type {Set<string>} */
 let reviewCheckedPaths = new Set();
 let removePushProgressListener = null;
+let removeRevertProgressListener = null;
 
 function reviewVisiblePaths() {
   return reviewDiffs.map((d) => d.daPath);
@@ -1282,7 +1572,7 @@ function toggleReviewCheckSelection() {
   }
   reviewCheckedPaths = togglePathsCheckState(reviewCheckedPaths, targets);
   paintReviewFileList();
-  updateReviewPushButton();
+  updateReviewActionButtons();
 }
 
 function toggleReviewCheck(daPath, checked) {
@@ -1292,19 +1582,24 @@ function toggleReviewCheck(daPath, checked) {
     reviewCheckedPaths.delete(daPath);
   }
   paintReviewFileList();
-  updateReviewPushButton();
+  updateReviewActionButtons();
 }
 
 function checkedReviewDiffs() {
   return reviewDiffs.filter((d) => reviewCheckedPaths.has(d.daPath));
 }
 
-function updateReviewPushButton({ forceDisabled = false } = {}) {
+function updateReviewActionButtons({ forceDisabled = false } = {}) {
   const count = checkedReviewDiffs().length;
-  els.reviewPush.disabled = forceDisabled || pushing || count === 0;
+  const busy = pushing || reverting;
+  els.reviewPush.disabled = forceDisabled || busy || count === 0;
+  els.reviewRevert.disabled = forceDisabled || busy || count === 0;
   els.reviewPush.textContent = count > 0 && !forceDisabled
     ? `Push changes (${count})`
     : 'Push changes';
+  els.reviewRevert.textContent = count > 0 && !forceDisabled
+    ? `Revert selected (${count})`
+    : 'Revert selected';
 }
 
 function renderReviewPlaceholder(message) {
@@ -1369,7 +1664,7 @@ function applyReviewDiffs(diffs, { preserveSelection = false } = {}) {
     reviewAnchorPath = first;
   }
 
-  updateReviewPushButton();
+  updateReviewActionButtons();
   paintReviewFileList();
   if (reviewFocusPath) {
     showReviewDiff(reviewFocusPath);
@@ -1388,6 +1683,7 @@ function resetReviewProgressUi() {
   els.reviewCancel.textContent = 'Cancel';
   lastPushedDaPaths = [];
   pushing = false;
+  reverting = false;
 }
 
 async function reloadReviewAfterPush() {
@@ -1437,7 +1733,7 @@ function handleReviewCancelClick() {
     if (reviewDiffs.length === 0) {
       closeReviewView();
     } else {
-      updateReviewPushButton();
+      updateReviewActionButtons();
     }
     return;
   }
@@ -1450,13 +1746,16 @@ async function openPushModal() {
   }
 
   pushing = false;
+  reverting = false;
   reviewDiffs = [];
   reviewSelectedPaths = new Set();
   reviewAnchorPath = null;
   reviewFocusPath = null;
   reviewCheckedPaths = new Set();
   els.reviewPush.disabled = true;
+  els.reviewRevert.disabled = true;
   els.reviewPush.textContent = 'Push changes';
+  els.reviewRevert.textContent = 'Revert selected';
   els.reviewCancel.textContent = 'Cancel';
   hide(els.reviewProgress);
   hide(els.reviewCopyPreviewUrls);
@@ -1502,9 +1801,16 @@ function closeReviewView() {
   if (pushing) {
     window.aemDesktop.cancelPush();
   }
+  if (reverting) {
+    window.aemDesktop.cancelRevert();
+  }
   if (removePushProgressListener) {
     removePushProgressListener();
     removePushProgressListener = null;
+  }
+  if (removeRevertProgressListener) {
+    removeRevertProgressListener();
+    removeRevertProgressListener = null;
   }
   resetReviewProgressUi();
   reviewDiffs = [];
@@ -1516,8 +1822,14 @@ function closeReviewView() {
   autoSyncCheck();
 }
 
-function handlePushProgress(data) {
-  if (data.phase === 'uploading') {
+function handleReviewProgress(data) {
+  if (data.phase === 'reverting') {
+    const pct = data.total > 0
+      ? Math.round((data.completed / data.total) * 100) : 0;
+    els.reviewProgressFill.style.width = `${pct}%`;
+    const current = data.current ? displayPath(data.current) : '';
+    els.reviewProgressText.textContent = `Reverting ${data.completed} / ${data.total}  ${current}`;
+  } else if (data.phase === 'uploading') {
     const pct = data.total > 0
       ? Math.round((data.completed / data.total) * 100) : 0;
     els.reviewProgressFill.style.width = `${pct}%`;
@@ -1531,14 +1843,62 @@ function handlePushProgress(data) {
     els.reviewProgressText.textContent = `Deleting ${data.completed} / ${data.total}  ${current}`;
   } else if (data.phase === 'done') {
     els.reviewProgressFill.style.width = '100%';
-    els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} pushed`;
-    pushing = false;
-    updateReviewPushButton({ forceDisabled: true });
-    els.reviewCancel.textContent = 'Done';
-    if (lastPushedDaPaths.length > 0) {
-      show(els.reviewCopyPreviewUrls);
+    if (reverting) {
+      els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} reverted`;
+      reverting = false;
+      updateReviewActionButtons({ forceDisabled: true });
+      els.reviewCancel.textContent = 'Done';
     } else {
-      hide(els.reviewCopyPreviewUrls);
+      els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} pushed`;
+      pushing = false;
+      updateReviewActionButtons({ forceDisabled: true });
+      els.reviewCancel.textContent = 'Done';
+      if (lastPushedDaPaths.length > 0) {
+        show(els.reviewCopyPreviewUrls);
+      } else {
+        hide(els.reviewCopyPreviewUrls);
+      }
+    }
+  }
+}
+
+async function startRevert() {
+  const selectedDiffs = checkedReviewDiffs();
+  if (!syncFolder || !state.activeSiteId || selectedDiffs.length === 0) {
+    return;
+  }
+
+  reverting = true;
+  updateReviewActionButtons();
+  show(els.reviewProgress);
+  hide(els.reviewCopyPreviewUrls);
+  els.reviewProgressText.textContent = `Starting — ${pluralFiles(selectedDiffs.length)}…`;
+
+  removeRevertProgressListener = window.aemDesktop.onRevertProgress(handleReviewProgress);
+
+  try {
+    const result = await window.aemDesktop.runRevert({
+      siteId: state.activeSiteId,
+      destFolder: syncFolder,
+      files: selectedDiffs.map(({ daPath, status }) => ({ daPath, status })),
+    });
+
+    if (result.cancelled) {
+      els.reviewProgressText.textContent = 'Cancelled';
+      els.reviewProgressFill.style.width = '0%';
+    } else {
+      await reloadReviewAfterPush();
+    }
+  } catch (err) {
+    els.reviewProgressText.textContent = err.message || 'Revert failed';
+  } finally {
+    reverting = false;
+    if (removeRevertProgressListener) {
+      removeRevertProgressListener();
+      removeRevertProgressListener = null;
+    }
+    if (els.reviewCancel.textContent !== 'Done') {
+      updateReviewActionButtons();
     }
   }
 }
@@ -1550,11 +1910,11 @@ async function startPush() {
   }
 
   pushing = true;
-  updateReviewPushButton();
+  updateReviewActionButtons();
   show(els.reviewProgress);
   els.reviewProgressText.textContent = `Starting — ${pluralFiles(selectedDiffs.length)}…`;
 
-  removePushProgressListener = window.aemDesktop.onPushProgress(handlePushProgress);
+  removePushProgressListener = window.aemDesktop.onPushProgress(handleReviewProgress);
 
   const filesToPush = selectedDiffs
     .filter((d) => d.status !== 'deleted')
@@ -1592,7 +1952,7 @@ async function startPush() {
       removePushProgressListener = null;
     }
     if (els.reviewCancel.textContent !== 'Done') {
-      updateReviewPushButton();
+      updateReviewActionButtons();
     }
   }
 }
@@ -1720,7 +2080,28 @@ function wireUi() {
     }
   });
 
+  els.pullStart.addEventListener('click', () => {
+    if (els.pullStart.textContent === 'Close') {
+      closePullModal();
+      return;
+    }
+    startPull();
+  });
+  els.pullCancel.addEventListener('click', closePullModal);
+  els.pullIncludeBinaries.addEventListener('change', () => {
+    if (syncFolder && !pulling) {
+      runPullCheck();
+    }
+  });
+  els.pullOverwriteConflicts.addEventListener('change', updatePullStartEnabled);
+  els.pullModal.addEventListener('click', (event) => {
+    if (event.target === els.pullModal) {
+      closePullModal();
+    }
+  });
+
   els.reviewPush.addEventListener('click', startPush);
+  els.reviewRevert.addEventListener('click', startRevert);
   els.reviewCancel.addEventListener('click', handleReviewCancelClick);
   els.reviewCopyPreviewUrls.addEventListener('click', copyReviewPreviewUrls);
   wireReviewKeyboard(els.reviewFileContainer, {

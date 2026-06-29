@@ -26,8 +26,11 @@ import { entryDisplayLabel, getIconByExtension } from './entry-utils.js';
  *   onToggleFolder: (daPath: string) => void,
  *   onRowClick: (item: object, event: MouseEvent) => void,
  *   onRowDoubleClick: (item: object, event: MouseEvent) => void,
+ *   onSyncSelected?: () => void,
  *   onPull?: () => void,
  *   onPush?: () => void,
+ *   canPull?: boolean,
+ *   hasPullChanges?: boolean,
  *   selectionCount?: number,
  * }} options
  */
@@ -74,7 +77,7 @@ export function renderFileTree(container, options) {
  */
 function renderPanelHeader(selectionCount, options) {
   const {
-    onPull, onPush, hasPushChanges,
+    onSyncSelected, onPull, onPush, hasPushChanges, hasPullChanges, canPull,
   } = options;
   const header = document.createElement('div');
   header.className = 'file-tree-header';
@@ -102,11 +105,11 @@ function renderPanelHeader(selectionCount, options) {
   if (onPull) {
     const pullBtn = document.createElement('button');
     pullBtn.type = 'button';
-    pullBtn.className = 's2-btn';
-    pullBtn.textContent = 'Sync selected…';
-    pullBtn.disabled = selectionCount === 0;
-    if (selectionCount === 0) {
-      pullBtn.title = 'Select files or folders in the tree to sync';
+    pullBtn.className = `s2-btn${hasPullChanges ? ' s2-btn-accent' : ''}`;
+    pullBtn.textContent = 'Pull…';
+    pullBtn.disabled = !canPull;
+    if (!canPull) {
+      pullBtn.title = 'Choose a local sync folder first';
     } else {
       pullBtn.removeAttribute('title');
     }
@@ -115,6 +118,24 @@ function renderPanelHeader(selectionCount, options) {
       onPull();
     });
     actions.append(pullBtn);
+  }
+
+  if (onSyncSelected) {
+    const syncBtn = document.createElement('button');
+    syncBtn.type = 'button';
+    syncBtn.className = 's2-btn';
+    syncBtn.textContent = 'Sync selected…';
+    syncBtn.disabled = selectionCount === 0;
+    if (selectionCount === 0) {
+      syncBtn.title = 'Select files or folders in the tree to sync';
+    } else {
+      syncBtn.removeAttribute('title');
+    }
+    syncBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onSyncSelected();
+    });
+    actions.append(syncBtn);
   }
 
   if (onPush) {
