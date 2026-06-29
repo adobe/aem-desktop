@@ -27,8 +27,14 @@ test('preview server serves transformed local html at root path', async () => {
 <div>Title</div><div>Local page</div>
 </div>
 <h1>Local page</h1>`);
+  await writeFile(join(contentRoot, 'metadata.json'), JSON.stringify({
+    default: {
+      data: [{ URL: '/local', Keywords: 'sheet-keyword' }],
+    },
+  }));
 
   const headCalls = [];
+  const metadataCalls = [];
   const server = await startPreviewServer({
     getActiveSite: async () => ({
       org,
@@ -49,15 +55,25 @@ test('preview server serves transformed local html at root path', async () => {
       }),
     });
   };
+  const originalMetadataResolve = server.metadataJsonCache.resolveSheetRow.bind(
+    server.metadataJsonCache,
+  );
+  server.metadataJsonCache.resolveSheetRow = async (options) => {
+    metadataCalls.push(options.previewPath);
+    return originalMetadataResolve(options);
+  };
 
   try {
     const localResp = await fetch(`${server.baseUrl}/local`);
     assert.equal(localResp.status, 200);
     const localBody = await localResp.text();
     assert.match(localBody, /<meta property="og:title" content="Local page">/);
+    assert.match(localBody, /<meta name="keywords" content="sheet-keyword">/);
     assert.doesNotMatch(localBody, /class="metadata"/);
     assert.match(localBody, /<link rel="stylesheet" href="\/styles\.css"\/>/);
+    assert.match(localBody, /<main>/);
     assert.equal(headCalls.length, 1);
+    assert.deepEqual(metadataCalls, ['/local']);
 
     const missingResp = await fetch(`${server.baseUrl}/does-not-exist-local`);
     assert.ok(missingResp.status >= 400);

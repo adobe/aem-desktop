@@ -33,6 +33,7 @@ import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
 import { startPreviewServer } from './preview-server.js';
 import { createPreviewServerRegistry } from './preview-server-registry.js';
 import { createHeadHtmlCache } from './head-html.js';
+import { createMetadataJsonCache } from './metadata-json.js';
 import {
   runSync, syncRoot, checkSyncStatus,
   collectFolder, isBinaryExtension,
@@ -657,6 +658,7 @@ app.whenReady().then(async () => {
   previewRegistry = createPreviewServerRegistry({
     startPreviewServer,
     createHeadHtmlCache,
+    createMetadataJsonCache,
     getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
     resolveActiveSite: resolvePreviewSite,
     log,

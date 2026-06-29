@@ -13,6 +13,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { transformContentMetadataHtml } from './content-metadata-html.js';
 import { replaceHeadInDocument } from './head-html.js';
+import { rewritePreviewOriginHrefs } from './preview-href-rewrite.js';
+import { wrapPreviewPageBody } from './preview-page-shell.js';
 import { previewPathToLocalRelativePaths } from './preview-url.js';
 
 /**
@@ -74,16 +76,22 @@ export async function resolveLocalContentFile(syncRootDir, previewPath) {
  * @param {string} htmlContent
  * @param {string} absolutePageUrl
  * @param {import('./head-html.js').ResolvedHeadHtml} headHtml
+ * @param {{ sheetRow?: Record<string, string>|null, previewUrlOrigin?: string }} [options]
  * @returns {Promise<string>}
  */
-export async function prepareLocalHtml(htmlContent, absolutePageUrl, headHtml) {
+export async function prepareLocalHtml(htmlContent, absolutePageUrl, headHtml, options = {}) {
+  const { sheetRow = null, previewUrlOrigin = '' } = options;
   const { htmlFragment, metaTagsHtml } = transformContentMetadataHtml(htmlContent, {
     absolutePageUrl,
+    sheetRow,
   });
-  let html = htmlFragment;
+  let html = wrapPreviewPageBody(htmlFragment);
 
   if (!html.includes('<head>')) {
-    html = `<html><head>${headHtml.headFragment}${metaTagsHtml}</head>${html}</html>`;
+    html = `<html><head>${headHtml.headFragment}${metaTagsHtml}</head><body>${html}</body></html>`;
+    if (previewUrlOrigin) {
+      html = rewritePreviewOriginHrefs(html, previewUrlOrigin);
+    }
     return html;
   }
 
@@ -93,6 +101,9 @@ export async function prepareLocalHtml(htmlContent, absolutePageUrl, headHtml) {
   if (metaTagsHtml) {
     html = html.replace(/<\/head>/i, `${metaTagsHtml}</head>`);
   }
+  if (previewUrlOrigin) {
+    html = rewritePreviewOriginHrefs(html, previewUrlOrigin);
+  }
   return html;
 }
 
@@ -101,6 +112,7 @@ export async function prepareLocalHtml(htmlContent, absolutePageUrl, headHtml) {
  * @param {string} relativePath
  * @param {string} absolutePageUrl
  * @param {import('./head-html.js').ResolvedHeadHtml} headHtml
+ * @param {{ sheetRow?: Record<string, string>|null, previewUrlOrigin?: string }} [options]
  * @returns {Promise<{ body: string|Buffer, contentType: string }>}
  */
 export async function readLocalPreviewContent(
@@ -108,12 +120,13 @@ export async function readLocalPreviewContent(
   relativePath,
   absolutePageUrl,
   headHtml,
+  options = {},
 ) {
   const lower = relativePath.toLowerCase();
   if (lower.endsWith('.html') || lower.endsWith('.htm')) {
     const raw = await readFile(filePath, 'utf-8');
     return {
-      body: await prepareLocalHtml(raw, absolutePageUrl, headHtml),
+      body: await prepareLocalHtml(raw, absolutePageUrl, headHtml, options),
       contentType: 'text/html; charset=utf-8',
     };
   }

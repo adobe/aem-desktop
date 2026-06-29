@@ -21,6 +21,7 @@ import {
   resolveLocalContentFile,
 } from './preview-local.js';
 import { createHeadHtmlCache } from './head-html.js';
+import { createMetadataJsonCache } from './metadata-json.js';
 
 const noop = () => {};
 
@@ -133,6 +134,7 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
 export async function startPreviewServer(deps) {
   const scope = previewLogger(deps.log);
   const headHtmlCache = deps.headHtmlCache || createHeadHtmlCache();
+  const metadataJsonCache = deps.metadataJsonCache || createMetadataJsonCache();
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
@@ -171,11 +173,17 @@ export async function startPreviewServer(deps) {
             previewUrlOrigin: site.previewUrl,
             syncRootDir: localRoot,
           });
+          const sheetRow = await metadataJsonCache.resolveSheetRow({
+            previewUrlOrigin: site.previewUrl,
+            syncRootDir: localRoot,
+            previewPath,
+          });
           const { body, contentType } = await readLocalPreviewContent(
             localFile.filePath,
             localFile.relativePath,
             absolutePageUrl,
             headHtml,
+            { sheetRow, previewUrlOrigin: site.previewUrl },
           );
           res.writeHead(200, {
             'content-type': contentType,
@@ -222,6 +230,7 @@ export async function startPreviewServer(deps) {
   return {
     baseUrl,
     headHtmlCache,
+    metadataJsonCache,
     close: () => new Promise((resolve, reject) => {
       server.close((err) => {
         if (err) {
