@@ -17,6 +17,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('aemDesktop', {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
+  showErrorDialog: (options) => ipcRenderer.invoke('app:show-error-dialog', options),
   captureScreenshot: () => ipcRenderer.invoke('dev:capture-screenshot'),
   isDev: () => ipcRenderer.invoke('app:is-dev'),
   openAppDevTools: () => ipcRenderer.invoke('dev:open-app-devtools'),
@@ -64,5 +65,13 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('push:progress', handler);
     return () => ipcRenderer.removeListener('push:progress', handler);
+  },
+
+  runHelix6Bulk: (options) => ipcRenderer.invoke('helix6:run-bulk', options),
+  cancelHelix6Bulk: () => ipcRenderer.invoke('helix6:cancel'),
+  onHelix6BulkProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('helix6:bulk-progress', handler);
+    return () => ipcRenderer.removeListener('helix6:bulk-progress', handler);
   },
 });

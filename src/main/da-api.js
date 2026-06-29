@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { buildHttpError } from './http-request-error.js';
+
 export const API_BACKEND_DA_LIVE = 'da.live';
 export const API_BACKEND_AEM_API = 'api.aem.live';
 
@@ -20,7 +22,6 @@ export const AEM_API_BASE = 'https://api.aem.live';
 export const LIST_CONTINUATION_HEADER = 'da-continuation-token';
 
 const LIST_MAX_PAGES = 50000;
-const MAX_ERROR_BODY_LEN = 500;
 
 /**
  * @param {string} backend
@@ -28,53 +29,6 @@ const MAX_ERROR_BODY_LEN = 500;
  */
 export function isValidApiBackend(backend) {
   return backend === API_BACKEND_DA_LIVE || backend === API_BACKEND_AEM_API;
-}
-
-/**
- * @param {string} method
- * @param {string} url
- * @param {Response} res
- * @param {string} [context]
- * @returns {Promise<string>}
- */
-async function formatHttpError(method, url, res, context = '') {
-  let detail = '';
-  try {
-    const text = await res.text();
-    if (text) {
-      const trimmed = text.trim();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (typeof parsed === 'object' && parsed !== null) {
-            detail = parsed.message || parsed.error || parsed.detail || JSON.stringify(parsed);
-          } else {
-            detail = trimmed;
-          }
-        } catch {
-          detail = trimmed;
-        }
-      } else {
-        detail = trimmed;
-      }
-      if (detail.length > MAX_ERROR_BODY_LEN) {
-        detail = `${detail.slice(0, MAX_ERROR_BODY_LEN)}…`;
-      }
-    }
-  } catch {
-    // ignore body read failures
-  }
-
-  const prefix = context ? `${context}: ` : '';
-  const statusPart = `${res.status}${res.statusText ? ` ${res.statusText}` : ''}`;
-  const parts = [`${prefix}${method} ${url} → ${statusPart}`];
-  if (detail) {
-    parts.push(detail);
-  }
-  if (res.status === 403) {
-    parts.push('Forbidden — verify your token has access to this org/repo.');
-  }
-  return parts.join(' — ');
 }
 
 /**
@@ -160,6 +114,37 @@ export function buildAemApiSourceUrl(org, repo, daPath) {
 /**
  * @param {string} org
  * @param {string} repo
+ * @returns {string}
+ */
+export function buildAemApiBulkPreviewUrl(org, repo) {
+  return `${AEM_API_BASE}/${org}/sites/${repo}/preview/`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @returns {string}
+ */
+export function buildAemApiBulkPublishUrl(org, repo) {
+  return `${AEM_API_BASE}/${org}/sites/${repo}/live/`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
+ * @param {string} topic
+ * @param {string} jobName
+ * @returns {string}
+ */
+export function buildAemApiJobUrl(org, repo, topic, jobName) {
+  const encTopic = encodeURIComponent(topic);
+  const encJob = encodeURIComponent(jobName);
+  return `${AEM_API_BASE}/${org}/sites/${repo}/jobs/${encTopic}/${encJob}`;
+}
+
+/**
+ * @param {string} org
+ * @param {string} repo
  * @param {string} parentDaPath
  * @param {string} name
  * @returns {string}
@@ -200,6 +185,31 @@ export function normalizeAemApiListEntry(entry, org, repo, parentDaPath) {
     ext,
     lastModified: entry['last-modified'] || entry.lastModified || undefined,
   };
+}
+
+/**
+ * Builds the POST upload request body for source create (interns external images).
+ *
+ * @param {string} backend
+ * @param {Buffer|Uint8Array|ArrayBuffer} data
+ * @param {string} contentType
+ * @param {string} daPath
+ * @returns {{ headers: Record<string, string>, body: BodyInit }}
+ */
+export function buildPostUploadRequest(backend, data, contentType, daPath) {
+  const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+  if (backend === API_BACKEND_AEM_API) {
+    return {
+      headers: { 'Content-Type': contentType },
+      body: bytes,
+    };
+  }
+
+  const rel = toApiRelativePath(normalizeDaPath(daPath));
+  const name = rel.split('/').pop() || 'file';
+  const form = new FormData();
+  form.append('data', new Blob([bytes], { type: contentType }), name);
+  return { headers: {}, body: form };
 }
 
 /**
@@ -258,7 +268,7 @@ export class DaClient {
         throw new Error('Unauthorized: invalid or expired token');
       }
       if (!res.ok) {
-        throw new Error(await formatHttpError('GET', url, res, `List failed for ${normalized}`)); // eslint-disable-line no-await-in-loop
+        throw await buildHttpError('GET', url, res, `List failed for ${normalized}`); // eslint-disable-line no-await-in-loop
       }
       const body = await res.json(); // eslint-disable-line no-await-in-loop
       if (!Array.isArray(body)) {
@@ -290,7 +300,7 @@ export class DaClient {
       throw new Error('Unauthorized: invalid or expired token');
     }
     if (!res.ok) {
-      throw new Error(await formatHttpError('GET', url, res, `List failed for ${normalized}`));
+      throw await buildHttpError('GET', url, res, `List failed for ${normalized}`);
     }
     const body = await res.json();
     if (!Array.isArray(body)) {
@@ -320,7 +330,7 @@ export class DaClient {
       return null;
     }
     if (!res.ok) {
-      throw new Error(await formatHttpError('GET', url, res, `Download failed for ${normalized}`));
+      throw await buildHttpError('GET', url, res, `Download failed for ${normalized}`);
     }
 
     const contentType = res.headers.get('content-type') || 'application/octet-stream';
@@ -349,7 +359,7 @@ export class DaClient {
       return null;
     }
     if (!res.ok) {
-      throw new Error(await formatHttpError('GET', url, res, `GET failed for ${normalized}`));
+      throw await buildHttpError('GET', url, res, `GET failed for ${normalized}`);
     }
 
     const contentType = res.headers.get('content-type') || 'application/octet-stream';
@@ -382,17 +392,34 @@ export class DaClient {
       ? buildAemApiSourceUrl(org, repo, normalized)
       : buildDaLiveSourceUrl(org, repo, normalized);
     const body = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-    const res = await this.fetch(url, {
+
+    const putRes = await this.fetch(url, {
       method: 'PUT',
       headers: { ...this.authHeader, 'Content-Type': contentType },
       body,
     });
-    if (res.status === 401) {
+    if (putRes.status === 401) {
       throw new Error('Unauthorized: invalid or expired token');
     }
-    if (!res.ok) {
-      throw new Error(await formatHttpError('PUT', url, res, `Upload failed for ${normalized}`));
+    if (putRes.ok) {
+      return;
     }
+    if (putRes.status === 400) {
+      const post = buildPostUploadRequest(this.backend, body, contentType, normalized);
+      const postRes = await this.fetch(url, {
+        method: 'POST',
+        headers: { ...this.authHeader, ...post.headers },
+        body: post.body,
+      });
+      if (postRes.status === 401) {
+        throw new Error('Unauthorized: invalid or expired token');
+      }
+      if (postRes.ok) {
+        return;
+      }
+      throw await buildHttpError('POST', url, postRes, `Upload failed for ${normalized}`);
+    }
+    throw await buildHttpError('PUT', url, putRes, `Upload failed for ${normalized}`);
   }
 
   /**
@@ -416,7 +443,79 @@ export class DaClient {
       throw new Error('Unauthorized: invalid or expired token');
     }
     if (!res.ok && res.status !== 404) {
-      throw new Error(await formatHttpError('DELETE', url, res, `Delete failed for ${normalized}`));
+      throw await buildHttpError('DELETE', url, res, `Delete failed for ${normalized}`);
+    }
+  }
+
+  /**
+   * @param {string} org
+   * @param {string} repo
+   * @param {string[]} paths
+   * @returns {Promise<object>}
+   */
+  async startBulkPreview(org, repo, paths) {
+    this.assertHelix6Backend();
+    const url = buildAemApiBulkPreviewUrl(org, repo);
+    const res = await this.fetch(url, {
+      method: 'POST',
+      headers: { ...this.authHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths, forceAsync: true }),
+    });
+    if (res.status === 401) {
+      throw new Error('Unauthorized: invalid or expired token');
+    }
+    if (!res.ok && res.status !== 202) {
+      throw await buildHttpError('POST', url, res, 'Bulk preview failed');
+    }
+    return res.json();
+  }
+
+  /**
+   * @param {string} org
+   * @param {string} repo
+   * @param {string[]} paths
+   * @returns {Promise<object>}
+   */
+  async startBulkPublish(org, repo, paths) {
+    this.assertHelix6Backend();
+    const url = buildAemApiBulkPublishUrl(org, repo);
+    const res = await this.fetch(url, {
+      method: 'POST',
+      headers: { ...this.authHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths, forceAsync: true }),
+    });
+    if (res.status === 401) {
+      throw new Error('Unauthorized: invalid or expired token');
+    }
+    if (!res.ok && res.status !== 202) {
+      throw await buildHttpError('POST', url, res, 'Bulk publish failed');
+    }
+    return res.json();
+  }
+
+  /**
+   * @param {string} org
+   * @param {string} repo
+   * @param {string} topic
+   * @param {string} jobName
+   * @returns {Promise<object>}
+   */
+  async getJobStatus(org, repo, topic, jobName) {
+    this.assertHelix6Backend();
+    const url = buildAemApiJobUrl(org, repo, topic, jobName);
+    const res = await this.fetch(url, { headers: this.authHeader });
+    if (res.status === 401) {
+      throw new Error('Unauthorized: invalid or expired token');
+    }
+    if (!res.ok && res.status !== 202) {
+      throw await buildHttpError('GET', url, res, 'Job status failed');
+    }
+    return res.json();
+  }
+
+  assertHelix6Backend() {
+    if (this.backend !== API_BACKEND_AEM_API) {
+      throw new Error('Bulk preview/publish requires api.aem.live (helix6)');
     }
   }
 }

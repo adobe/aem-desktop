@@ -98,14 +98,23 @@
               <div id="review-progress-fill" class="sync-progress-fill"></div>
             </div>
             <p id="review-progress-text" class="sync-progress-text"></p>
-            <button
-              type="button"
-              id="review-copy-preview-urls"
-              class="s2-btn review-copy-preview-urls hidden"
-              hidden
-            >
-              Copy Preview URLs
-            </button>
+            <div id="review-post-push-actions" class="review-post-push-actions hidden" hidden>
+              <button
+                type="button"
+                id="review-copy-preview-urls"
+                class="s2-btn review-copy-preview-urls"
+              >
+                Copy preview URLs
+              </button>
+              <button
+                type="button"
+                id="review-preview-publish"
+                class="s2-btn s2-btn-primary review-preview-publish hidden"
+                hidden
+              >
+                Preview or publish…
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -170,6 +179,39 @@
           <span class="modal-actions-spacer"></span>
           <button type="button" id="sync-start" class="btn primary" disabled>Sync</button>
           <button type="button" id="sync-cancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="helix6-modal" class="modal-overlay hidden" hidden>
+      <div class="modal">
+        <h2 class="modal-title">Preview or publish</h2>
+        <div class="modal-body">
+          <p class="sync-info">Paths updated on helix6 (api.aem.live)</p>
+          <ul id="helix6-path-list" class="sync-path-list"></ul>
+          <fieldset class="helix6-mode-field">
+            <legend class="helix6-mode-legend">Action</legend>
+            <label class="helix6-mode-option">
+              <input type="radio" name="helix6-mode" value="preview" checked />
+              Preview updated content
+            </label>
+            <label class="helix6-mode-option">
+              <input type="radio" name="helix6-mode" value="preview-publish" />
+              Preview and publish to live
+            </label>
+          </fieldset>
+          <div id="helix6-progress" class="sync-progress hidden" hidden>
+            <div class="sync-progress-bar">
+              <div id="helix6-progress-fill" class="sync-progress-fill"></div>
+            </div>
+            <p id="helix6-progress-text" class="sync-progress-text"></p>
+          </div>
+          <p id="helix6-error" class="error hidden" hidden></p>
+        </div>
+        <div class="modal-actions">
+          <span class="modal-actions-spacer"></span>
+          <button type="button" id="helix6-start" class="btn primary">Start</button>
+          <button type="button" id="helix6-cancel" class="btn">Cancel</button>
         </div>
       </div>
     </div>
