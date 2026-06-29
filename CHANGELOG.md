@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/adobe/aem-desktop/compare/v1.2.0...v1.2.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* sync performance, preview cache isolation, push URLs, and tree badges ([9d65805](https://github.com/adobe/aem-desktop/commit/9d658050ec400f68026202b67f43591e0bc907e0))
+
 # [1.2.0](https://github.com/adobe/aem-desktop/compare/v1.1.4...v1.2.0) (2026-06-08)
 
 
