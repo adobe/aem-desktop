@@ -36,6 +36,7 @@ const state = {
   sites: [],
   activeSiteId: null,
   authenticated: false,
+  siteAuthenticated: false,
   icons: null,
   tree: {
     cache: {},
@@ -72,6 +73,9 @@ const els = {
   signInBtn: document.getElementById('sign-in-btn'),
   signOutBtn: document.getElementById('sign-out-btn'),
   contentBody: document.getElementById('content-body'),
+  previewAuthOverlay: document.getElementById('preview-auth-overlay'),
+  previewAuthDescription: document.getElementById('preview-auth-description'),
+  previewAuthLogin: document.getElementById('preview-auth-login'),
   syncModal: document.getElementById('sync-modal'),
   syncPickFolder: document.getElementById('sync-pick-folder'),
   syncFolderPath: document.getElementById('sync-folder-path'),
@@ -200,6 +204,7 @@ async function enterBrowse(siteId) {
   }
   state.activeSiteId = siteId;
   await window.aemDesktop.setActivePreviewSite(siteId);
+  await refreshSiteAuthStatus();
   resetTree();
   renderContentPlaceholder('Select a file from the folder list.');
   showView('browse');
@@ -339,6 +344,86 @@ let previewWebview = null;
 let previewOrigin = null;
 let previewDevEnabled = null;
 let previewDevToolsAutoOpened = false;
+/** @type {401|403|null} */
+let previewAuthStatus = null;
+
+function hidePreviewAuthOverlay() {
+  previewAuthStatus = null;
+  hide(els.previewAuthOverlay);
+}
+
+function updatePreviewAuthOverlayMessage(status) {
+  if (status === 403) {
+    els.previewAuthDescription.textContent = 'Access denied. Try signing in with a different user or ask your administrator for sufficient permissions.';
+    return;
+  }
+  els.previewAuthDescription.textContent = state.siteAuthenticated
+    ? 'Access expired. Please sign in again to continue.'
+    : 'Please sign in to continue.';
+}
+
+function showPreviewAuthOverlay(status) {
+  previewAuthStatus = status;
+  updatePreviewAuthOverlayMessage(status);
+  show(els.previewAuthOverlay);
+}
+
+async function refreshSiteAuthStatus() {
+  if (!state.activeSiteId) {
+    state.siteAuthenticated = false;
+    return;
+  }
+  try {
+    const status = await window.aemDesktop.getSiteAuthStatus(state.activeSiteId);
+    state.siteAuthenticated = status.authenticated;
+  } catch {
+    state.siteAuthenticated = false;
+  }
+}
+
+async function detectPreviewAuthStatus(webview) {
+  if (!webview || webview !== previewWebview) {
+    return null;
+  }
+  try {
+    return await webview.executeJavaScript(`
+      (() => {
+        const pre = document.querySelector('body > pre');
+        if (!pre) return null;
+        const text = pre.textContent.trim();
+        if (text === '401 Unauthorized') return 401;
+        if (text === '403 Forbidden') return 403;
+        return null;
+      })()
+    `, true);
+  } catch {
+    return null;
+  }
+}
+
+async function checkPreviewAuthError(webview) {
+  const status = await detectPreviewAuthStatus(webview);
+  if (status === 401 || status === 403) {
+    await refreshSiteAuthStatus();
+    showPreviewAuthOverlay(status);
+    return;
+  }
+  hidePreviewAuthOverlay();
+}
+
+async function handlePreviewSiteLogin() {
+  if (!state.activeSiteId || !previewAuthStatus) {
+    return;
+  }
+  els.previewAuthLogin.disabled = true;
+  try {
+    await window.aemDesktop.loginSite(state.activeSiteId);
+  } catch (err) {
+    els.previewAuthDescription.textContent = err.message || 'Sign-in failed';
+  } finally {
+    els.previewAuthLogin.disabled = false;
+  }
+}
 
 function destroyPreviewWebview() {
   if (previewWebview) {
@@ -347,6 +432,7 @@ function destroyPreviewWebview() {
     previewOrigin = null;
     previewDevToolsAutoOpened = false;
   }
+  hidePreviewAuthOverlay();
 }
 
 function renderContentPlaceholder(message) {
@@ -399,10 +485,6 @@ function wirePreviewWebviewDevTools(webview) {
         `[preview] subresource failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
       );
     }
-  });
-
-  webview.addEventListener('did-finish-load', () => {
-    console.info(`[preview] loaded ${webview.getURL()}`);
   });
 
   webview.addEventListener('console-message', (event) => {
@@ -464,6 +546,15 @@ function ensurePreviewWebview(origin) {
     if (dev && webview === previewWebview) {
       wirePreviewWebviewDevTools(webview);
     }
+  });
+
+  webview.addEventListener('did-finish-load', () => {
+    previewDevMode().then((dev) => {
+      if (dev) {
+        console.info(`[preview] loaded ${webview.getURL()}`);
+      }
+    });
+    checkPreviewAuthError(webview);
   });
 
   return webview;
@@ -2195,6 +2286,7 @@ function wireUi() {
   els.addSiteForm.addEventListener('submit', handleAddSite);
   els.signInBtn.addEventListener('click', handleSignIn);
   els.signOutBtn.addEventListener('click', handleSignOut);
+  els.previewAuthLogin.addEventListener('click', handlePreviewSiteLogin);
 
   window.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
@@ -2367,6 +2459,17 @@ async function init() {
   await loadSyncFolderPreference();
   await refreshAuthStatus();
   await loadSites();
+  window.aemDesktop.onSiteAuthUpdated(async ({ org, repo }) => {
+    const site = activeSite();
+    if (!site || site.org !== org || site.repo !== repo) {
+      return;
+    }
+    state.siteAuthenticated = true;
+    if (previewAuthStatus && previewWebview) {
+      hidePreviewAuthOverlay();
+      previewWebview.reloadIgnoringCache();
+    }
+  });
   showView('home');
 }
 

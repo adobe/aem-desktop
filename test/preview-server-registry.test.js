@@ -32,6 +32,7 @@ test('preview server registry assigns ports per upstream origin', async () => {
       return {
         baseUrl: `http://127.0.0.1:${nextPort}`,
         close: async () => {},
+        loginSession: { createState: () => 'state' },
       };
     },
     createHeadHtmlCache: () => ({
@@ -43,6 +44,8 @@ test('preview server registry assigns ports per upstream origin', async () => {
       resolveSheetRow: async () => null,
     }),
     getSyncFolder: async () => null,
+    getSiteToken: async () => null,
+    saveSiteToken: async () => {},
     resolveActiveSite: async (siteId) => ({
       org: 'org',
       repo: siteId,
@@ -75,6 +78,7 @@ test('preview server registry clears active base URL when deactivated', async ()
     startPreviewServer: async () => ({
       baseUrl: 'http://127.0.0.1:6001',
       close: async () => {},
+      loginSession: { createState: () => 'state' },
     }),
     createHeadHtmlCache: () => ({
       clear: () => {},
@@ -85,6 +89,8 @@ test('preview server registry clears active base URL when deactivated', async ()
       resolveSheetRow: async () => null,
     }),
     getSyncFolder: async () => null,
+    getSiteToken: async () => null,
+    saveSiteToken: async () => {},
     resolveActiveSite: async () => null,
   });
 

@@ -27,6 +27,13 @@ import {
   DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
 } from './da-auth.js';
 import {
+  getSiteAuthStatus,
+  getStoredSiteToken,
+  LOGIN_ROUTE,
+  saveSiteToken,
+  SITE_TOKENS_FILENAME,
+} from './site-auth.js';
+import {
   addSiteFromUrl, findSite, loadSites, removeSite, saveSites,
 } from './site-store.js';
 import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
@@ -69,6 +76,10 @@ function userDataPath(name) {
 
 function tokenPath() {
   return userDataPath(DA_TOKEN_FILENAME);
+}
+
+function siteTokensPath() {
+  return userDataPath(SITE_TOKENS_FILENAME);
 }
 
 function sitesPath() {
@@ -115,7 +126,9 @@ async function resolvePreviewSite(siteId) {
   return {
     org: site.org,
     repo: site.repo,
+    branch: site.branch,
     previewUrl: site.previewUrl,
+    apiBackend: site.apiBackend,
   };
 }
 
@@ -138,7 +151,9 @@ async function setActivePreviewSite(siteId) {
   await previewRegistry.activateSite(siteId, {
     org: site.org,
     repo: site.repo,
+    branch: site.branch,
     previewUrl: site.previewUrl,
+    apiBackend: site.apiBackend,
   });
 }
 
@@ -276,6 +291,33 @@ ipcMain.handle('da:login', async () => {
 });
 
 ipcMain.handle('da:logout', async () => logout(tokenPath()));
+
+ipcMain.handle('site:auth-status', async (_event, { siteId }) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+  return getSiteAuthStatus(siteTokensPath(), site.org, site.repo);
+});
+
+ipcMain.handle('site:login', async (_event, { siteId }) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  await setActivePreviewSite(siteId);
+  const proxyBase = previewRegistry?.getBaseUrl();
+  if (!proxyBase) {
+    throw new Error('Preview proxy is not ready');
+  }
+
+  const loginUrl = `${proxyBase.replace(/\/+$/, '')}${LOGIN_ROUTE}`;
+  await shell.openExternal(loginUrl);
+  return { loginUrl };
+});
 
 ipcMain.handle('da:list', async (_event, { siteId, daPath = '/' }) => {
   const sites = await ensureSitesLoaded();
@@ -768,6 +810,18 @@ app.whenReady().then(async () => {
     createMetadataJsonCache,
     getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
     resolveActiveSite: resolvePreviewSite,
+    getSiteToken: (org, repo) => getStoredSiteToken(siteTokensPath(), org, repo),
+    saveSiteToken: (org, repo, siteToken) => saveSiteToken(
+      siteTokensPath(),
+      org,
+      repo,
+      siteToken,
+    ),
+    onSiteTokenSaved: ({ org, repo }) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('site:auth-updated', { org, repo });
+      }
+    },
     log,
   });
 

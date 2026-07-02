@@ -95,3 +95,54 @@ test('preview server returns 503 when no active site', async () => {
     await server.close();
   }
 });
+
+test('preview server wraps upstream 401 as html pre for auth overlay', async () => {
+  const server = await startPreviewServer({
+    getActiveSite: async () => ({
+      org: 'org',
+      repo: 'id',
+      previewUrl: 'https://main--id--org.aem.page',
+    }),
+    getSyncFolder: async () => null,
+    getSiteToken: async () => null,
+    fetchFn: async () => new Response('401 Unauthorized', {
+      status: 401,
+      headers: { 'content-type': 'text/plain' },
+    }),
+  });
+
+  try {
+    const resp = await fetch(`${server.baseUrl}/protected`);
+    assert.equal(resp.status, 401);
+    assert.match(resp.headers.get('content-type'), /text\/html/);
+    const body = await resp.text();
+    assert.match(body, /<pre[^>]*>401 Unauthorized<\/pre>/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview server sends Authorization token header upstream', async () => {
+  let authHeader;
+  const server = await startPreviewServer({
+    getActiveSite: async () => ({
+      org: 'org',
+      repo: 'id',
+      previewUrl: 'https://main--id--org.aem.page',
+    }),
+    getSyncFolder: async () => null,
+    getSiteToken: async () => 'hlxtst_secret',
+    fetchFn: async (_url, init) => {
+      authHeader = init?.headers?.authorization;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  try {
+    const resp = await fetch(`${server.baseUrl}/page`);
+    assert.equal(resp.status, 200);
+    assert.equal(authHeader, 'token hlxtst_secret');
+  } finally {
+    await server.close();
+  }
+});

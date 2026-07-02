@@ -22,6 +22,15 @@ import {
 } from './preview-local.js';
 import { createHeadHtmlCache } from './head-html.js';
 import { createMetadataJsonCache } from './metadata-json.js';
+import {
+  buildAuthErrorHtml,
+  buildSiteLoginAckUrl,
+  buildSiteLoginUrl,
+  createSiteLoginSession,
+  LOGIN_ACK_ROUTE,
+  LOGIN_ROUTE,
+  siteAuthRequestHeaders,
+} from './site-auth.js';
 
 const noop = () => {};
 
@@ -65,11 +74,55 @@ const SKIP_RESPONSE_HEADERS = new Set([
 /**
  * @param {import('node:http').ServerResponse} res
  * @param {number} status
+ * @param {Record<string, string|string[]>} headers
+ * @param {string} [body]
+ */
+function sendResponse(res, status, headers, body = '') {
+  res.writeHead(status, headers);
+  res.end(body);
+}
+
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
  * @param {string} message
  */
 function sendText(res, status, message) {
-  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
-  res.end(message);
+  sendResponse(res, status, { 'content-type': 'text/plain; charset=utf-8' }, message);
+}
+
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {Promise<unknown>}
+ */
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  if (chunks.length === 0) {
+    return {};
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * @param {string|null|undefined} siteToken
+ * @returns {typeof fetch}
+ */
+function createAuthenticatedFetch(siteToken, fetchFn = fetch) {
+  const authHeaders = siteAuthRequestHeaders(siteToken);
+  return (url, init = {}) => {
+    const headers = {
+      ...(init.headers || {}),
+      ...authHeaders,
+    };
+    return fetchFn(url, { ...init, headers });
+  };
 }
 
 /**
@@ -77,12 +130,14 @@ function sendText(res, status, message) {
  * @param {import('node:http').ServerResponse} res
  * @param {string} upstreamUrl
  * @param {string} proxyHost
+ * @param {string|null|undefined} siteToken
  */
-async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
+async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn) {
   /** @type {Record<string, string>} */
   const reqHeaders = {
     'x-forwarded-host': proxyHost,
     'x-forwarded-scheme': 'http',
+    ...siteAuthRequestHeaders(siteToken),
   };
   const names = Object.keys(req.headers);
   for (let i = 0; i < names.length; i += 1) {
@@ -92,7 +147,7 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
     }
   }
 
-  const upstream = await fetch(upstreamUrl, {
+  const upstream = await fetchFn(upstreamUrl, {
     method: req.method,
     headers: reqHeaders,
     redirect: 'follow',
@@ -107,6 +162,25 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
       respHeaders[key] = value;
     }
   });
+
+  if (upstream.status === 401 || upstream.status === 403) {
+    const contentType = upstream.headers.get('content-type') || 'text/plain';
+    if (contentType.startsWith('text/html')) {
+      const textBody = await upstream.text();
+      respHeaders['content-type'] = contentType;
+      sendResponse(res, upstream.status, respHeaders, req.method === 'HEAD' ? '' : textBody);
+      return;
+    }
+
+    respHeaders['content-type'] = 'text/html; charset=utf-8';
+    sendResponse(
+      res,
+      upstream.status,
+      respHeaders,
+      req.method === 'HEAD' ? '' : buildAuthErrorHtml(upstream.status, upstreamUrl),
+    );
+    return;
+  }
 
   res.writeHead(upstream.status, respHeaders);
 
@@ -125,20 +199,86 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
 
 /**
  * @param {{
- *   getActiveSite: () => Promise<{ org: string, repo: string, previewUrl: string }|null>,
+ *   getActiveSite: () => Promise<{
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }|null>,
  *   getSyncFolder: () => Promise<string|null>,
+ *   getSiteToken?: () => Promise<string|null>,
+ *   onSiteToken?: (siteToken: string) => Promise<void>|void,
+ *   loginSession?: ReturnType<import('./site-auth.js').createSiteLoginSession>,
+ *   fetchFn?: typeof fetch,
  *   log?: import('electron-log').MainLogger,
  * }} deps
- * @returns {Promise<{ baseUrl: string, close: () => Promise<void> }>}
+ * @returns {Promise<{
+ *   baseUrl: string,
+ *   close: () => Promise<void>,
+ *   headHtmlCache: ReturnType<typeof createHeadHtmlCache>,
+ *   metadataJsonCache: ReturnType<typeof createMetadataJsonCache>,
+ *   loginSession: ReturnType<import('./site-auth.js').createSiteLoginSession>,
+ * }>}
  */
 export async function startPreviewServer(deps) {
   const scope = previewLogger(deps.log);
   const headHtmlCache = deps.headHtmlCache || createHeadHtmlCache();
   const metadataJsonCache = deps.metadataJsonCache || createMetadataJsonCache();
+  const loginSession = deps.loginSession || createSiteLoginSession();
+  const getSiteToken = deps.getSiteToken || (async () => null);
+  const fetchFn = deps.fetchFn || fetch;
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
       sendText(res, 400, 'Bad request');
+      return;
+    }
+
+    const requestUrl = new URL(req.url, 'http://127.0.0.1');
+    const { pathname } = requestUrl;
+
+    if (pathname === LOGIN_ROUTE && req.method === 'GET') {
+      const site = await deps.getActiveSite();
+      if (!site) {
+        sendText(res, 503, 'No active site for preview');
+        return;
+      }
+
+      const baseUrl = `http://${requestUrl.host}`;
+      const loginUrl = buildSiteLoginUrl({
+        org: site.org,
+        repo: site.repo,
+        branch: site.branch,
+        apiBackend: site.apiBackend,
+        ackUrl: buildSiteLoginAckUrl(baseUrl),
+      });
+      const redirectUrl = loginSession.buildLoginRedirectUrl(loginUrl);
+      scope.info(`Redirecting to site login for ${site.org}/${site.repo}`);
+      sendResponse(res, 302, { location: redirectUrl });
+      return;
+    }
+
+    if (pathname === LOGIN_ACK_ROUTE) {
+      const body = req.method === 'POST' ? await readJsonBody(req) : {};
+      const ack = await loginSession.handleAck({
+        method: req.method || 'GET',
+        origin: req.headers.origin,
+        body,
+      });
+
+      if (ack.siteToken && deps.onSiteToken) {
+        try {
+          await deps.onSiteToken(ack.siteToken);
+          scope.info('Site token received from Admin login');
+        } catch (err) {
+          scope.error(`Failed to persist site token: ${err.message}`);
+          sendText(res, 500, 'Failed to save site token');
+          return;
+        }
+      }
+
+      sendResponse(res, ack.status, ack.headers, ack.body);
       return;
     }
 
@@ -147,8 +287,7 @@ export async function startPreviewServer(deps) {
       return;
     }
 
-    const requestUrl = new URL(req.url, 'http://127.0.0.1');
-    const previewPath = pathnameToPreviewPath(requestUrl.pathname);
+    const previewPath = pathnameToPreviewPath(pathname);
 
     const site = await deps.getActiveSite();
     if (!site) {
@@ -163,6 +302,9 @@ export async function startPreviewServer(deps) {
       requestUrl.search,
     );
 
+    const siteToken = await getSiteToken();
+    const authFetch = createAuthenticatedFetch(siteToken, fetchFn);
+
     const syncFolder = await deps.getSyncFolder();
     if (syncFolder) {
       const localRoot = syncRoot(syncFolder, site.org, site.repo);
@@ -172,11 +314,13 @@ export async function startPreviewServer(deps) {
           const headHtml = await headHtmlCache.resolve({
             previewUrlOrigin: site.previewUrl,
             syncRootDir: localRoot,
+            fetchFn: authFetch,
           });
           const sheetRow = await metadataJsonCache.resolveSheetRow({
             previewUrlOrigin: site.previewUrl,
             syncRootDir: localRoot,
             previewPath,
+            fetchFn: authFetch,
           });
           const { body, contentType } = await readLocalPreviewContent(
             localFile.filePath,
@@ -185,15 +329,10 @@ export async function startPreviewServer(deps) {
             headHtml,
             { sheetRow, previewUrlOrigin: site.previewUrl },
           );
-          res.writeHead(200, {
+          sendResponse(res, 200, {
             'content-type': contentType,
             'access-control-allow-origin': '*',
-          });
-          if (req.method === 'HEAD') {
-            res.end();
-          } else {
-            res.end(body);
-          }
+          }, req.method === 'HEAD' ? '' : body);
           scope.info(`local ${localFile.relativePath} -> 200 ${pathWithQuery}`);
           return;
         } catch (err) {
@@ -204,7 +343,7 @@ export async function startPreviewServer(deps) {
 
     const proxyHost = req.headers.host || requestUrl.host;
     try {
-      await proxyUpstream(req, res, upstreamUrl, proxyHost);
+      await proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn);
       scope.info(`proxy ${pathWithQuery} -> ${upstreamUrl} (${res.statusCode})`);
     } catch (err) {
       scope.error(`proxy failed for ${upstreamUrl}: ${err.message}`);
@@ -231,6 +370,7 @@ export async function startPreviewServer(deps) {
     baseUrl,
     headHtmlCache,
     metadataJsonCache,
+    loginSession,
     close: () => new Promise((resolve, reject) => {
       server.close((err) => {
         if (err) {

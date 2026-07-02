@@ -79,6 +79,18 @@
           <div id="content-body" class="content-body">
             <p class="placeholder">Select a file from the folder list.</p>
           </div>
+          <div id="preview-auth-overlay" class="preview-auth-overlay hidden" hidden>
+            <div class="preview-auth-dialog" role="dialog" aria-labelledby="preview-auth-title">
+              <div class="preview-auth-icon" aria-hidden="true">
+                <svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg">
+                  <path fill="currentColor" d="M120 20a70 70 0 0 0-70 70v10H40a20 20 0 0 0-20 20v80a20 20 0 0 0 20 20h160a20 20 0 0 0 20-20v-80a20 20 0 0 0-20-20h-10v-10a70 70 0 0 0-70-70zm-50 80v-10a50 50 0 1 1 100 0v10H70z"/>
+                </svg>
+              </div>
+              <h2 id="preview-auth-title" class="preview-auth-title">This site is protected</h2>
+              <p id="preview-auth-description" class="preview-auth-description"></p>
+              <button type="button" id="preview-auth-login" class="btn primary preview-auth-login">Sign in</button>
+            </div>
+          </div>
         </main>
       </div>
 

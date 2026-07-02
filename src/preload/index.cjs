@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   getDaAuthStatus: () => ipcRenderer.invoke('da:auth-status'),
   loginDa: () => ipcRenderer.invoke('da:login'),
   logoutDa: () => ipcRenderer.invoke('da:logout'),
+  getSiteAuthStatus: (siteId) => ipcRenderer.invoke('site:auth-status', { siteId }),
+  loginSite: (siteId) => ipcRenderer.invoke('site:login', { siteId }),
+  onSiteAuthUpdated: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('site:auth-updated', handler);
+    return () => ipcRenderer.removeListener('site:auth-updated', handler);
+  },
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
