@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   addSiteFromUrl, loadSites, removeSite, saveSites,
+  API_BACKEND_AEM_API,
 } from '../src/main/site-store.js';
 
 test('addSiteFromUrl persists and deduplicates', async () => {
@@ -36,6 +37,13 @@ test('addSiteFromUrl persists and deduplicates', async () => {
       () => addSiteFromUrl(loaded, 'https://main--id--davidnuescheler.aem.page/'),
       /already added/,
     );
+
+    const { site: apiSite } = addSiteFromUrl(
+      [],
+      'https://main--other--davidnuescheler.aem.page/',
+      API_BACKEND_AEM_API,
+    );
+    assert.equal(apiSite.apiBackend, API_BACKEND_AEM_API);
 
     const next = removeSite(loaded, site.id);
     assert.equal(next.length, 0);

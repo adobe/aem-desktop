@@ -65,6 +65,7 @@ const els = {
   addSiteToggle: document.getElementById('add-site-toggle'),
   addSiteCancel: document.getElementById('add-site-cancel'),
   siteUrlInput: document.getElementById('site-url-input'),
+  useApiAemLive: document.getElementById('use-api-aem-live'),
   addSiteError: document.getElementById('add-site-error'),
   fileTree: document.getElementById('file-tree'),
   authStatus: document.getElementById('auth-status'),
@@ -121,11 +122,38 @@ const els = {
   reviewProgress: document.getElementById('review-progress'),
   reviewProgressFill: document.getElementById('review-progress-fill'),
   reviewProgressText: document.getElementById('review-progress-text'),
+  reviewPostPushActions: document.getElementById('review-post-push-actions'),
   reviewCopyPreviewUrls: document.getElementById('review-copy-preview-urls'),
+  reviewPreviewPublish: document.getElementById('review-preview-publish'),
+  helix6Modal: document.getElementById('helix6-modal'),
+  helix6PathList: document.getElementById('helix6-path-list'),
+  helix6Progress: document.getElementById('helix6-progress'),
+  helix6ProgressFill: document.getElementById('helix6-progress-fill'),
+  helix6ProgressText: document.getElementById('helix6-progress-text'),
+  helix6Error: document.getElementById('helix6-error'),
+  helix6Start: document.getElementById('helix6-start'),
+  helix6Cancel: document.getElementById('helix6-cancel'),
 };
 
 function activeSite() {
   return state.sites.find((site) => site.id === state.activeSiteId) ?? null;
+}
+
+function isHelix6Site() {
+  return activeSite()?.apiBackend === 'api.aem.live';
+}
+
+function showReviewPostPushActions() {
+  if (lastPushedDaPaths.length === 0) {
+    hide(els.reviewPostPushActions);
+    return;
+  }
+  show(els.reviewPostPushActions);
+  if (isHelix6Site()) {
+    show(els.reviewPreviewPublish);
+  } else {
+    hide(els.reviewPreviewPublish);
+  }
 }
 
 function renderNav() {
@@ -191,6 +219,23 @@ function hide(element) {
   element.hidden = true;
 }
 
+/**
+ * @param {string} title
+ * @param {{ message?: string, xError?: string|null, detail?: string }|Error|string} error
+ */
+async function showRequestErrorDialog(title, error) {
+  const payload = typeof error === 'string'
+    ? { message: error }
+    : error;
+  const message = payload?.message || String(error);
+  await window.aemDesktop.showErrorDialog({
+    title,
+    message,
+    detail: payload?.detail || message,
+    xError: payload?.xError ?? null,
+  });
+}
+
 function setError(message) {
   if (message) {
     els.addSiteError.textContent = message;
@@ -201,7 +246,18 @@ function setError(message) {
 }
 
 function siteLabel(site) {
-  return `${site.org}/${site.repo}`;
+  const backend = site.apiBackend && site.apiBackend !== 'da.live' ? site.apiBackend : null;
+  return backend ? `${site.org}/${site.repo} (${backend})` : `${site.org}/${site.repo}`;
+}
+
+function selectedApiBackend() {
+  return els.useApiAemLive.checked ? 'api.aem.live' : 'da.live';
+}
+
+function resetAddSiteForm() {
+  els.siteUrlInput.value = '';
+  els.useApiAemLive.checked = false;
+  setError('');
 }
 
 function resetTree() {
@@ -262,20 +318,19 @@ function selectAllVisibleItems() {
 
 function renderAuthStatus() {
   if (state.authenticated) {
-    els.authStatus.textContent = 'Signed in to DA';
+    els.authStatus.textContent = 'Signed in to AEM';
     els.authStatus.classList.add('ok');
     hide(els.signInBtn);
     show(els.signOutBtn);
     els.addSiteToggle.disabled = false;
   } else {
-    els.authStatus.textContent = 'Sign in to DA to open a site';
+    els.authStatus.textContent = 'Sign in to AEM to open a site';
     els.authStatus.classList.remove('ok');
     show(els.signInBtn);
     hide(els.signOutBtn);
     els.addSiteToggle.disabled = true;
     hide(els.addSiteForm);
-    setError('');
-    els.siteUrlInput.value = '';
+    resetAddSiteForm();
   }
   renderSites();
 }
@@ -283,12 +338,14 @@ function renderAuthStatus() {
 let previewWebview = null;
 let previewOrigin = null;
 let previewDevEnabled = null;
+let previewDevToolsAutoOpened = false;
 
 function destroyPreviewWebview() {
   if (previewWebview) {
     previewWebview.remove();
     previewWebview = null;
     previewOrigin = null;
+    previewDevToolsAutoOpened = false;
   }
 }
 
@@ -322,6 +379,16 @@ async function previewDevMode() {
 }
 
 function wirePreviewWebviewDevTools(webview) {
+  webview.addEventListener('dom-ready', () => {
+    previewDevMode().then((dev) => {
+      if (!dev || webview !== previewWebview || previewDevToolsAutoOpened) {
+        return;
+      }
+      webview.openDevTools({ mode: 'right' });
+      previewDevToolsAutoOpened = true;
+    });
+  });
+
   webview.addEventListener('did-fail-load', (event) => {
     if (event.isMainFrame) {
       console.error(
@@ -352,7 +419,8 @@ function wirePreviewWebviewDevTools(webview) {
 
 function openPreviewDevTools() {
   if (previewWebview) {
-    previewWebview.openDevTools({ mode: 'detach' });
+    previewWebview.openDevTools({ mode: 'right' });
+    previewDevToolsAutoOpened = true;
   }
 }
 
@@ -711,7 +779,7 @@ function renderSites() {
     btn.type = 'button';
     btn.className = 'site-btn';
     btn.disabled = !state.authenticated;
-    btn.title = state.authenticated ? '' : 'Sign in to DA to open this site';
+    btn.title = state.authenticated ? '' : 'Sign in to AEM to open this site';
     btn.innerHTML = `<span class="site-name">${siteLabel(site)}</span><span class="site-branch">${site.branch}</span>`;
     btn.addEventListener('click', () => selectSite(site.id));
 
@@ -754,9 +822,9 @@ async function handleAddSite(event) {
   }
 
   try {
-    const site = await window.aemDesktop.addSite(url);
+    const site = await window.aemDesktop.addSite(url, selectedApiBackend());
     state.sites = await window.aemDesktop.listSites();
-    els.siteUrlInput.value = '';
+    resetAddSiteForm();
     hide(els.addSiteForm);
     if (state.authenticated) {
       await enterBrowse(site.id);
@@ -1463,6 +1531,9 @@ async function startSync() {
       els.syncProgressText.textContent = 'Cancelled';
       els.syncProgressFill.style.width = '0%';
       autoSyncCheck();
+    } else if (result.error) {
+      els.syncProgressText.textContent = result.error.message;
+      await showRequestErrorDialog('Sync failed', result.error);
     } else {
       syncSucceeded = true;
       if (result.syncedPath) {
@@ -1472,6 +1543,7 @@ async function startSync() {
     }
   } catch (err) {
     els.syncProgressText.textContent = err.message || 'Sync failed';
+    await showRequestErrorDialog('Sync failed', err);
   } finally {
     syncing = false;
     els.syncPickFolder.disabled = false;
@@ -1500,6 +1572,8 @@ let reviewFocusPath = null;
 /** @type {Set<string>} */
 let reviewCheckedPaths = new Set();
 let removePushProgressListener = null;
+let helix6Running = false;
+let removeHelix6ProgressListener = null;
 let removeRevertProgressListener = null;
 
 function reviewVisiblePaths() {
@@ -1675,10 +1749,11 @@ function applyReviewDiffs(diffs, { preserveSelection = false } = {}) {
 
 function resetReviewProgressUi() {
   hide(els.reviewProgress);
-  hide(els.reviewCopyPreviewUrls);
+  hide(els.reviewPostPushActions);
+  hide(els.reviewPreviewPublish);
   els.reviewProgressFill.style.width = '0%';
   els.reviewProgressText.textContent = '';
-  els.reviewCopyPreviewUrls.textContent = 'Copy Preview URLs';
+  els.reviewCopyPreviewUrls.textContent = 'Copy preview URLs';
   els.reviewCopyPreviewUrls.disabled = false;
   els.reviewCancel.textContent = 'Cancel';
   lastPushedDaPaths = [];
@@ -1719,7 +1794,7 @@ async function copyReviewPreviewUrls() {
     els.reviewCopyPreviewUrls.textContent = 'Copied!';
     window.setTimeout(() => {
       if (els.reviewCopyPreviewUrls.textContent === 'Copied!') {
-        els.reviewCopyPreviewUrls.textContent = 'Copy Preview URLs';
+        els.reviewCopyPreviewUrls.textContent = 'Copy preview URLs';
       }
     }, 2000);
   } catch {
@@ -1758,7 +1833,7 @@ async function openPushModal() {
   els.reviewRevert.textContent = 'Revert selected';
   els.reviewCancel.textContent = 'Cancel';
   hide(els.reviewProgress);
-  hide(els.reviewCopyPreviewUrls);
+  hide(els.reviewPostPushActions);
   els.reviewProgressFill.style.width = '0%';
   els.reviewProgressText.textContent = '';
   renderReviewPlaceholder('Loading changes…');
@@ -1854,9 +1929,9 @@ function handleReviewProgress(data) {
       updateReviewActionButtons({ forceDisabled: true });
       els.reviewCancel.textContent = 'Done';
       if (lastPushedDaPaths.length > 0) {
-        show(els.reviewCopyPreviewUrls);
+        showReviewPostPushActions();
       } else {
-        hide(els.reviewCopyPreviewUrls);
+        hide(els.reviewPostPushActions);
       }
     }
   }
@@ -1871,7 +1946,7 @@ async function startRevert() {
   reverting = true;
   updateReviewActionButtons();
   show(els.reviewProgress);
-  hide(els.reviewCopyPreviewUrls);
+  hide(els.reviewPostPushActions);
   els.reviewProgressText.textContent = `Starting — ${pluralFiles(selectedDiffs.length)}…`;
 
   removeRevertProgressListener = window.aemDesktop.onRevertProgress(handleReviewProgress);
@@ -1924,7 +1999,7 @@ async function startPush() {
     .map((d) => d.daPath);
 
   lastPushedDaPaths = filesToPush;
-  hide(els.reviewCopyPreviewUrls);
+  hide(els.reviewPostPushActions);
 
   try {
     const result = await window.aemDesktop.runPush({
@@ -1938,13 +2013,19 @@ async function startPush() {
       lastPushedDaPaths = [];
       els.reviewProgressText.textContent = 'Cancelled';
       els.reviewProgressFill.style.width = '0%';
+    } else if (result.error) {
+      lastPushedDaPaths = [];
+      els.reviewProgressText.textContent = result.error.message;
+      hide(els.reviewPostPushActions);
+      await showRequestErrorDialog('Push failed', result.error);
     } else {
       await reloadReviewAfterPush();
     }
   } catch (err) {
     lastPushedDaPaths = [];
     els.reviewProgressText.textContent = err.message || 'Push failed';
-    hide(els.reviewCopyPreviewUrls);
+    hide(els.reviewPostPushActions);
+    await showRequestErrorDialog('Push failed', err);
   } finally {
     pushing = false;
     if (removePushProgressListener) {
@@ -1957,6 +2038,147 @@ async function startPush() {
   }
 }
 
+function selectedHelix6Mode() {
+  const checked = els.helix6Modal.querySelector('input[name="helix6-mode"]:checked');
+  return checked?.value || 'preview';
+}
+
+function populateHelix6PathList() {
+  els.helix6PathList.replaceChildren();
+  for (const daPath of lastPushedDaPaths) {
+    const li = document.createElement('li');
+    li.textContent = displayPath(daPath);
+    els.helix6PathList.append(li);
+  }
+}
+
+function resetHelix6ModalUi() {
+  hide(els.helix6Progress);
+  hide(els.helix6Error);
+  els.helix6ProgressFill.style.width = '0%';
+  els.helix6ProgressText.textContent = '';
+  els.helix6Start.disabled = false;
+  els.helix6Cancel.textContent = 'Cancel';
+  helix6Running = false;
+}
+
+function openHelix6Modal() {
+  if (!isHelix6Site() || lastPushedDaPaths.length === 0) {
+    return;
+  }
+  resetHelix6ModalUi();
+  populateHelix6PathList();
+  const previewRadio = els.helix6Modal.querySelector('input[value="preview"]');
+  if (previewRadio) {
+    previewRadio.checked = true;
+  }
+  show(els.helix6Modal);
+}
+
+function closeHelix6Modal() {
+  if (helix6Running) {
+    window.aemDesktop.cancelHelix6Bulk();
+  }
+  hide(els.helix6Modal);
+  resetHelix6ModalUi();
+}
+
+function formatHelix6Progress(data) {
+  if (data.phase === 'starting') {
+    const action = data.mode === 'preview-publish' ? 'preview and publish' : 'preview';
+    return `Starting ${action} for ${data.pathCount} path(s)…`;
+  }
+  if (data.phase === 'job') {
+    const label = data.topic === 'publish' ? 'Publishing' : 'Previewing';
+    const prog = data.progress;
+    if (prog && typeof prog.total === 'number') {
+      const processed = prog.processed ?? 0;
+      const failed = prog.failed ?? 0;
+      const failedPart = failed > 0 ? ` (${failed} failed)` : '';
+      return `${label}… ${processed} / ${prog.total}${failedPart}`;
+    }
+    return `${label}… (${data.state || 'running'})`;
+  }
+  if (data.phase === 'done') {
+    return data.mode === 'preview-publish'
+      ? 'Preview and publish complete'
+      : 'Preview complete';
+  }
+  return '';
+}
+
+function handleHelix6Progress(data) {
+  const text = formatHelix6Progress(data);
+  if (text) {
+    els.helix6ProgressText.textContent = text;
+  }
+  if (data.phase === 'job' && data.progress?.total > 0) {
+    const processed = data.progress.processed ?? 0;
+    const pct = Math.round((processed / data.progress.total) * 100);
+    els.helix6ProgressFill.style.width = `${pct}%`;
+  } else if (data.phase === 'done') {
+    els.helix6ProgressFill.style.width = '100%';
+  }
+}
+
+async function startHelix6Bulk() {
+  if (!state.activeSiteId || lastPushedDaPaths.length === 0 || helix6Running) {
+    return;
+  }
+
+  helix6Running = true;
+  els.helix6Start.disabled = true;
+  hide(els.helix6Error);
+  show(els.helix6Progress);
+  els.helix6ProgressFill.style.width = '0%';
+  els.helix6ProgressText.textContent = 'Starting…';
+
+  removeHelix6ProgressListener = window.aemDesktop.onHelix6BulkProgress(handleHelix6Progress);
+
+  try {
+    const result = await window.aemDesktop.runHelix6Bulk({
+      siteId: state.activeSiteId,
+      daPaths: lastPushedDaPaths,
+      mode: selectedHelix6Mode(),
+    });
+    if (result.cancelled) {
+      els.helix6ProgressText.textContent = 'Cancelled';
+      els.helix6ProgressFill.style.width = '0%';
+    } else if (result.error) {
+      els.helix6Error.textContent = result.error.message;
+      show(els.helix6Error);
+      els.helix6ProgressText.textContent = 'Failed';
+      await showRequestErrorDialog('Preview/publish failed', result.error);
+    } else {
+      els.helix6Cancel.textContent = 'Close';
+    }
+  } catch (err) {
+    els.helix6Error.textContent = err.message || 'Preview/publish failed';
+    show(els.helix6Error);
+    els.helix6ProgressText.textContent = 'Failed';
+    await showRequestErrorDialog('Preview/publish failed', err);
+  } finally {
+    helix6Running = false;
+    els.helix6Start.disabled = false;
+    if (removeHelix6ProgressListener) {
+      removeHelix6ProgressListener();
+      removeHelix6ProgressListener = null;
+    }
+  }
+}
+
+function handleHelix6CancelClick() {
+  if (helix6Running) {
+    window.aemDesktop.cancelHelix6Bulk();
+    return;
+  }
+  if (els.helix6Cancel.textContent === 'Close') {
+    closeHelix6Modal();
+    return;
+  }
+  closeHelix6Modal();
+}
+
 function wireUi() {
   els.navHome.addEventListener('click', goHome);
 
@@ -1967,8 +2189,7 @@ function wireUi() {
 
   els.addSiteCancel.addEventListener('click', () => {
     hide(els.addSiteForm);
-    setError('');
-    els.siteUrlInput.value = '';
+    resetAddSiteForm();
   });
 
   els.addSiteForm.addEventListener('submit', handleAddSite);
@@ -2104,6 +2325,14 @@ function wireUi() {
   els.reviewRevert.addEventListener('click', startRevert);
   els.reviewCancel.addEventListener('click', handleReviewCancelClick);
   els.reviewCopyPreviewUrls.addEventListener('click', copyReviewPreviewUrls);
+  els.reviewPreviewPublish.addEventListener('click', openHelix6Modal);
+  els.helix6Start.addEventListener('click', startHelix6Bulk);
+  els.helix6Cancel.addEventListener('click', handleHelix6CancelClick);
+  els.helix6Modal.addEventListener('click', (event) => {
+    if (event.target === els.helix6Modal && !helix6Running) {
+      closeHelix6Modal();
+    }
+  });
   wireReviewKeyboard(els.reviewFileContainer, {
     onSelect: focusReviewFile,
     onSelectAll: selectAllReviewFiles,

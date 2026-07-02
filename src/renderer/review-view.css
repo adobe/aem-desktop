@@ -281,5 +281,39 @@
 
 .review-copy-preview-urls {
   margin-top: 0.625rem;
-  width: 100%;
+}
+
+.review-post-push-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.625rem;
+}
+
+.review-post-push-actions .review-copy-preview-urls {
+  margin-top: 0;
+}
+
+.helix6-mode-field {
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--rail-border);
+  border-radius: 6px;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.helix6-mode-legend {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0 0.2rem;
+}
+
+.helix6-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
 }

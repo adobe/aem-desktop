@@ -20,7 +20,9 @@ import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
 import { screenshotFilename } from './dev-config.js';
 import { toDaPath } from './aem-page-url.js';
-import { DaClient } from './da-api.js';
+import { API_BACKEND_AEM_API, API_BACKEND_DA_LIVE } from './content-api-shared.js';
+import { ContentApiClient } from './content-api-client.js';
+import { HttpRequestError } from './http-request-error.js';
 import {
   DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
 } from './da-auth.js';
@@ -40,6 +42,7 @@ import {
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
 } from './da-sync.js';
+import { runHelix6BulkWorkflow } from './helix6-bulk.js';
 import log from './logger.js';
 
 // Use the basic (plaintext) Chromium password store instead of the macOS
@@ -88,6 +91,21 @@ async function persistSites(sites) {
   await saveSites(sitesPath(), sites);
 }
 
+/**
+ * @param {unknown} err
+ * @returns {{ message: string, xError: string|null, status: number|null }|null}
+ */
+function toRequestErrorPayload(err) {
+  if (err instanceof HttpRequestError) {
+    return {
+      message: err.message,
+      xError: err.xError ?? null,
+      status: err.status ?? null,
+    };
+  }
+  return null;
+}
+
 async function resolvePreviewSite(siteId) {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -124,12 +142,13 @@ async function setActivePreviewSite(siteId) {
   });
 }
 
-async function withDaClient(fn) {
+async function withContentClient(site, fn) {
   const accessToken = await getValidToken({
     tokenPath: tokenPath(),
     openBrowser: (url) => shell.openExternal(url),
   });
-  return fn(new DaClient(accessToken));
+  const backend = site.apiBackend || API_BACKEND_DA_LIVE;
+  return fn(new ContentApiClient(accessToken, backend));
 }
 
 async function createWindow() {
@@ -173,6 +192,29 @@ ipcMain.handle('app:open-external', (_event, { url }) => {
   shell.openExternal(url);
 });
 
+ipcMain.handle('app:show-error-dialog', async (_event, {
+  title, message, detail, xError,
+}) => {
+  const dialogTitle = title || 'Error';
+  const lines = [];
+  const body = detail || message || '';
+  if (body) {
+    lines.push(body);
+  }
+  if (xError && !body.includes(`x-error: ${xError}`)) {
+    if (lines.length > 0) {
+      lines.push('');
+    }
+    lines.push(`x-error: ${xError}`);
+  }
+  await dialog.showMessageBox(mainWindow, {
+    type: 'error',
+    title: dialogTitle,
+    message: dialogTitle,
+    detail: lines.join('\n') || 'An unexpected error occurred.',
+  });
+});
+
 ipcMain.handle('preview:build-url', async (_event, { siteId, daPath }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -209,9 +251,9 @@ ipcMain.handle('sites:list', async () => {
   return sitesCache;
 });
 
-ipcMain.handle('sites:add', async (_event, { url }) => {
+ipcMain.handle('sites:add', async (_event, { url, apiBackend }) => {
   const sites = await ensureSitesLoaded();
-  const { site, sites: next } = addSiteFromUrl(sites, url);
+  const { site, sites: next } = addSiteFromUrl(sites, url, apiBackend);
   await persistSites(next);
   return site;
 });
@@ -242,7 +284,7 @@ ipcMain.handle('da:list', async (_event, { siteId, daPath = '/' }) => {
     throw new Error('Site not found');
   }
 
-  return withDaClient(async (client) => {
+  return withContentClient(site, async (client) => {
     const items = await client.list(site.org, site.repo, daPath);
     return items.map((item) => ({
       ...item,
@@ -259,7 +301,7 @@ ipcMain.handle('da:get-source', async (_event, { siteId, daPath }) => {
     throw new Error('Site not found');
   }
 
-  return withDaClient(async (client) => {
+  return withContentClient(site, async (client) => {
     const result = await client.getSource(site.org, site.repo, daPath);
     if (!result) {
       return null;
@@ -313,7 +355,7 @@ ipcMain.handle('sync:check', async (event, {
     throw new Error('Site not found');
   }
 
-  return withDaClient(async (client) => {
+  return withContentClient(site, async (client) => {
     const allFiles = [];
     const reportProgress = (discovered) => {
       if (!event.sender.isDestroyed()) {
@@ -381,7 +423,7 @@ ipcMain.handle('sync:run', async (event, {
     const skip = skipConflicts?.length
       ? new Set(skipConflicts)
       : undefined;
-    const manifest = await withDaClient((client) => runSync({
+    const manifest = await withContentClient(site, (client) => runSync({
       client,
       org: site.org,
       repo: site.repo,
@@ -404,6 +446,10 @@ ipcMain.handle('sync:run', async (event, {
   } catch (err) {
     if (signal.aborted) {
       return { ok: false, cancelled: true };
+    }
+    const error = toRequestErrorPayload(err);
+    if (error) {
+      return { ok: false, error };
     }
     throw err;
   } finally {
@@ -451,7 +497,7 @@ ipcMain.handle('pull:check', async (event, {
     throw new Error('Site not found');
   }
 
-  return withDaClient((client) => checkPullStatus({
+  return withContentClient(site, (client) => checkPullStatus({
     client,
     org: site.org,
     repo: site.repo,
@@ -478,7 +524,7 @@ ipcMain.handle('pull:run', async (event, {
   const { signal } = pullAbortController;
 
   try {
-    const result = await withDaClient((client) => runPull({
+    const result = await withContentClient(site, (client) => runPull({
       client,
       org: site.org,
       repo: site.repo,
@@ -510,6 +556,7 @@ ipcMain.handle('pull:cancel', () => {
 });
 
 let pushAbortController = null;
+let helix6AbortController = null;
 
 ipcMain.handle('push:check', async (_event, {
   siteId, destFolder,
@@ -585,7 +632,7 @@ ipcMain.handle('push:run', async (event, {
   const { signal } = pushAbortController;
 
   try {
-    const result = await withDaClient((client) => runPush({
+    const result = await withContentClient(site, (client) => runPush({
       client,
       org: site.org,
       repo: site.repo,
@@ -603,6 +650,10 @@ ipcMain.handle('push:run', async (event, {
   } catch (err) {
     if (signal.aborted) {
       return { ok: false, cancelled: true };
+    }
+    const error = toRequestErrorPayload(err);
+    if (error) {
+      return { ok: false, error };
     }
     throw err;
   } finally {
@@ -634,6 +685,62 @@ ipcMain.handle('push:diffs', async (_event, {
     localNew,
     deleted,
   });
+});
+
+ipcMain.handle('helix6:run-bulk', async (event, {
+  siteId, daPaths, mode,
+}) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+  if (site.apiBackend !== API_BACKEND_AEM_API) {
+    throw new Error('Preview/publish jobs require api.aem.live (helix6)');
+  }
+  if (mode !== 'preview' && mode !== 'preview-publish') {
+    throw new Error('Invalid helix6 bulk mode');
+  }
+
+  helix6AbortController = new AbortController();
+  const { signal } = helix6AbortController;
+
+  try {
+    await withContentClient(site, async (client) => {
+      await runHelix6BulkWorkflow({
+        client,
+        org: site.org,
+        repo: site.repo,
+        daPaths,
+        mode,
+        signal,
+        onProgress: (data) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('helix6:bulk-progress', data);
+          }
+        },
+      });
+    });
+    return { ok: true };
+  } catch (err) {
+    if (signal.aborted) {
+      return { ok: false, cancelled: true };
+    }
+    const error = toRequestErrorPayload(err);
+    if (error) {
+      return { ok: false, error };
+    }
+    throw err;
+  } finally {
+    helix6AbortController = null;
+  }
+});
+
+ipcMain.handle('helix6:cancel', () => {
+  if (helix6AbortController) {
+    helix6AbortController.abort();
+    helix6AbortController = null;
+  }
 });
 
 // Development convenience: double-clicking anywhere in the UI captures a

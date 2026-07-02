@@ -13,6 +13,11 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseAemPageUrl } from './aem-page-url.js';
+import {
+  API_BACKEND_DA_LIVE,
+  API_BACKEND_AEM_API,
+  isValidApiBackend,
+} from './content-api-shared.js';
 
 /**
  * @typedef {{
@@ -21,6 +26,7 @@ import { parseAemPageUrl } from './aem-page-url.js';
  *   repo: string,
  *   branch: string,
  *   previewUrl: string,
+ *   apiBackend: string,
  *   addedAt: string,
  * }} Site
  */
@@ -51,9 +57,14 @@ export async function saveSites(storePath, sites) {
 /**
  * @param {Site[]} sites
  * @param {string} url
+ * @param {string} [apiBackend]
  * @returns {{ site: Site, sites: Site[] }}
  */
-export function addSiteFromUrl(sites, url) {
+export function addSiteFromUrl(sites, url, apiBackend = API_BACKEND_DA_LIVE) {
+  if (!isValidApiBackend(apiBackend)) {
+    throw new Error(`Invalid API backend: ${apiBackend}`);
+  }
+
   const parsed = parseAemPageUrl(url);
   const duplicate = sites.find((s) => s.org === parsed.org && s.repo === parsed.repo);
   if (duplicate) {
@@ -66,11 +77,14 @@ export function addSiteFromUrl(sites, url) {
     repo: parsed.repo,
     branch: parsed.branch,
     previewUrl: parsed.previewUrl,
+    apiBackend,
     addedAt: new Date().toISOString(),
   };
 
   return { site, sites: [...sites, site] };
 }
+
+export { API_BACKEND_DA_LIVE, API_BACKEND_AEM_API };
 
 /**
  * @param {Site[]} sites

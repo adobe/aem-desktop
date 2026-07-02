@@ -54,7 +54,7 @@ export function renderFileTree(container, options) {
   }
 
   if (!authenticated) {
-    container.append(createNotice('Sign in to browse content.', false, true));
+    container.append(createNotice('Sign in to AEM to browse content.', false, true));
     return;
   }
 

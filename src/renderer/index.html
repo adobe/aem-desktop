@@ -45,6 +45,10 @@
               spellcheck="false"
               required
             />
+            <label class="api-backend-option">
+              <input type="checkbox" id="use-api-aem-live" />
+              api.aem.live
+            </label>
             <div class="form-actions">
               <button type="submit" class="btn primary">Add</button>
               <button type="button" id="add-site-cancel" class="btn">Cancel</button>
@@ -58,7 +62,7 @@
         <footer class="home-footer">
           <div id="auth-status" class="auth-status">Checking sign-in…</div>
           <div class="home-auth-actions">
-            <button type="button" id="sign-in-btn" class="btn primary hidden" hidden>Sign in to DA</button>
+            <button type="button" id="sign-in-btn" class="btn primary hidden" hidden>Sign in to AEM</button>
             <button type="button" id="sign-out-btn" class="btn hidden" hidden>Sign out</button>
           </div>
         </footer>
@@ -95,14 +99,23 @@
               <div id="review-progress-fill" class="sync-progress-fill"></div>
             </div>
             <p id="review-progress-text" class="sync-progress-text"></p>
-            <button
-              type="button"
-              id="review-copy-preview-urls"
-              class="s2-btn review-copy-preview-urls hidden"
-              hidden
-            >
-              Copy Preview URLs
-            </button>
+            <div id="review-post-push-actions" class="review-post-push-actions hidden" hidden>
+              <button
+                type="button"
+                id="review-copy-preview-urls"
+                class="s2-btn review-copy-preview-urls"
+              >
+                Copy preview URLs
+              </button>
+              <button
+                type="button"
+                id="review-preview-publish"
+                class="s2-btn s2-btn-primary review-preview-publish hidden"
+                hidden
+              >
+                Preview or publish…
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -208,6 +221,39 @@
           <span class="modal-actions-spacer"></span>
           <button type="button" id="pull-start" class="btn primary" disabled>Pull</button>
           <button type="button" id="pull-cancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="helix6-modal" class="modal-overlay hidden" hidden>
+      <div class="modal">
+        <h2 class="modal-title">Preview or publish</h2>
+        <div class="modal-body">
+          <p class="sync-info">Paths updated on helix6 (api.aem.live)</p>
+          <ul id="helix6-path-list" class="sync-path-list"></ul>
+          <fieldset class="helix6-mode-field">
+            <legend class="helix6-mode-legend">Action</legend>
+            <label class="helix6-mode-option">
+              <input type="radio" name="helix6-mode" value="preview" checked />
+              Preview updated content
+            </label>
+            <label class="helix6-mode-option">
+              <input type="radio" name="helix6-mode" value="preview-publish" />
+              Preview and publish to live
+            </label>
+          </fieldset>
+          <div id="helix6-progress" class="sync-progress hidden" hidden>
+            <div class="sync-progress-bar">
+              <div id="helix6-progress-fill" class="sync-progress-fill"></div>
+            </div>
+            <p id="helix6-progress-text" class="sync-progress-text"></p>
+          </div>
+          <p id="helix6-error" class="error hidden" hidden></p>
+        </div>
+        <div class="modal-actions">
+          <span class="modal-actions-spacer"></span>
+          <button type="button" id="helix6-start" class="btn primary">Start</button>
+          <button type="button" id="helix6-cancel" class="btn">Cancel</button>
         </div>
       </div>
     </div>
