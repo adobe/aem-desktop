@@ -10,212 +10,34 @@
  * governing permissions and limitations under the License.
  */
 
+import {
+  buildAemApiBulkPreviewUrl,
+  buildAemApiBulkPublishUrl,
+  buildAemApiJobUrl,
+  buildAemApiListUrl,
+  buildAemApiSourceUrl,
+  normalizeAemApiListEntry,
+} from './aem-admin-api.js';
+import {
+  API_BACKEND_AEM_API,
+  API_BACKEND_DA_LIVE,
+  buildPostUploadRequest,
+  isValidApiBackend,
+  normalizeDaPath,
+} from './content-api-shared.js';
+import {
+  buildDaLiveListUrl,
+  buildDaLiveSourceUrl,
+  LIST_CONTINUATION_HEADER,
+} from './da-live-api.js';
 import { buildHttpError } from './http-request-error.js';
-
-export const API_BACKEND_DA_LIVE = 'da.live';
-export const API_BACKEND_AEM_API = 'api.aem.live';
-
-export const DA_ADMIN = 'https://admin.da.live';
-export const AEM_API_BASE = 'https://api.aem.live';
-
-/** Response header used to page past the per-request list limit (da.live only). */
-export const LIST_CONTINUATION_HEADER = 'da-continuation-token';
 
 const LIST_MAX_PAGES = 50000;
 
 /**
- * @param {string} backend
- * @returns {boolean}
+ * HTTP client for da.live admin and api.aem.live (helix6) content APIs.
  */
-export function isValidApiBackend(backend) {
-  return backend === API_BACKEND_DA_LIVE || backend === API_BACKEND_AEM_API;
-}
-
-/**
- * Normalizes a DA path: leading slash, no trailing slash except root.
- *
- * @param {string} daPath
- * @returns {string}
- */
-export function normalizeDaPath(daPath) {
-  if (!daPath || daPath === '/') {
-    return '/';
-  }
-  const withSlash = daPath.startsWith('/') ? daPath : `/${daPath}`;
-  return withSlash.replace(/\/+$/, '') || '/';
-}
-
-/**
- * Repo-relative path without a leading slash (empty string for root).
- *
- * @param {string} daPath
- * @returns {string}
- */
-export function toApiRelativePath(daPath) {
-  const normalized = normalizeDaPath(daPath);
-  if (normalized === '/') {
-    return '';
-  }
-  return normalized.slice(1);
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @param {string} daPath
- * @returns {string}
- */
-export function buildDaLiveListUrl(org, repo, daPath) {
-  const normalized = normalizeDaPath(daPath);
-  return `${DA_ADMIN}/list/${org}/${repo}${normalized === '/' ? '/' : normalized}`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @param {string} daPath
- * @returns {string}
- */
-export function buildDaLiveSourceUrl(org, repo, daPath) {
-  const normalized = normalizeDaPath(daPath);
-  return `${DA_ADMIN}/source/${org}/${repo}${normalized}`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @param {string} daPath
- * @returns {string}
- */
-export function buildAemApiListUrl(org, repo, daPath) {
-  const rel = toApiRelativePath(daPath);
-  const base = `${AEM_API_BASE}/${org}/sites/${repo}/source`;
-  if (!rel) {
-    return `${base}/`;
-  }
-  return `${base}/${rel}/`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @param {string} daPath
- * @returns {string}
- */
-export function buildAemApiSourceUrl(org, repo, daPath) {
-  const rel = toApiRelativePath(daPath);
-  const base = `${AEM_API_BASE}/${org}/sites/${repo}/source`;
-  if (!rel) {
-    return base;
-  }
-  return `${base}/${rel}`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @returns {string}
- */
-export function buildAemApiBulkPreviewUrl(org, repo) {
-  return `${AEM_API_BASE}/${org}/sites/${repo}/preview/`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @returns {string}
- */
-export function buildAemApiBulkPublishUrl(org, repo) {
-  return `${AEM_API_BASE}/${org}/sites/${repo}/live/`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @param {string} topic
- * @param {string} jobName
- * @returns {string}
- */
-export function buildAemApiJobUrl(org, repo, topic, jobName) {
-  const encTopic = encodeURIComponent(topic);
-  const encJob = encodeURIComponent(jobName);
-  return `${AEM_API_BASE}/${org}/sites/${repo}/jobs/${encTopic}/${encJob}`;
-}
-
-/**
- * @param {string} org
- * @param {string} repo
- * @param {string} parentDaPath
- * @param {string} name
- * @returns {string}
- */
-function fullListEntryPath(org, repo, parentDaPath, name) {
-  const parent = normalizeDaPath(parentDaPath);
-  const rel = parent === '/' ? `/${name}` : `${parent}/${name}`;
-  return `/${org}/${repo}${rel}`;
-}
-
-/**
- * @param {object} entry
- * @param {string} org
- * @param {string} repo
- * @param {string} parentDaPath
- * @returns {{ path: string, name: string, ext?: string, lastModified?: string }}
- */
-export function normalizeAemApiListEntry(entry, org, repo, parentDaPath) {
-  const rawName = entry.name || '';
-  const isFolder = entry['content-type'] === 'application/folder' || rawName.endsWith('/');
-  const fileName = rawName.endsWith('/') ? rawName.slice(0, -1) : rawName;
-  const path = fullListEntryPath(org, repo, parentDaPath, fileName);
-
-  if (isFolder) {
-    return {
-      path,
-      name: fileName,
-      lastModified: entry['last-modified'] || entry.lastModified || undefined,
-    };
-  }
-
-  const dot = fileName.lastIndexOf('.');
-  const ext = dot >= 0 ? fileName.slice(dot + 1) : '';
-  const name = dot >= 0 ? fileName.slice(0, dot) : fileName;
-  return {
-    path,
-    name,
-    ext,
-    lastModified: entry['last-modified'] || entry.lastModified || undefined,
-  };
-}
-
-/**
- * Builds the POST upload request body for source create (interns external images).
- *
- * @param {string} backend
- * @param {Buffer|Uint8Array|ArrayBuffer} data
- * @param {string} contentType
- * @param {string} daPath
- * @returns {{ headers: Record<string, string>, body: BodyInit }}
- */
-export function buildPostUploadRequest(backend, data, contentType, daPath) {
-  const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-  if (backend === API_BACKEND_AEM_API) {
-    return {
-      headers: { 'Content-Type': contentType },
-      body: bytes,
-    };
-  }
-
-  const rel = toApiRelativePath(normalizeDaPath(daPath));
-  const name = rel.split('/').pop() || 'file';
-  const form = new FormData();
-  form.append('data', new Blob([bytes], { type: contentType }), name);
-  return { headers: {}, body: form };
-}
-
-/**
- * HTTP client for DA admin and AEM Admin API (list + source).
- */
-export class DaClient {
+export class ContentApiClient {
   /**
    * @param {string} token IMS Bearer token
    * @param {string} [backend]

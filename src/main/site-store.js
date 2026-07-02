@@ -17,7 +17,7 @@ import {
   API_BACKEND_DA_LIVE,
   API_BACKEND_AEM_API,
   isValidApiBackend,
-} from './da-api.js';
+} from './content-api-shared.js';
 
 /**
  * @typedef {{

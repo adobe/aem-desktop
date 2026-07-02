@@ -410,7 +410,7 @@ export async function checkSyncStatus({
 /**
  * Recursively collects all files under a DA folder (up to CONCURRENCY parallel list calls).
  *
- * @param {import('./da-api.js').DaClient} client
+ * @param {import('./content-api-client.js').ContentApiClient} client
  * @param {string} org
  * @param {string} repo
  * @param {string} daPath
@@ -539,7 +539,7 @@ async function syncOneFile(client, org, repo, destRoot, file) {
 
 /**
  * @param {{
- *   client: import('./da-api.js').DaClient,
+ *   client: import('./content-api-client.js').ContentApiClient,
  *   org: string,
  *   repo: string,
  *   items: Array<{daPath: string, isFolder: boolean, ext?: string, lastModified?: string}>,
@@ -763,7 +763,7 @@ function guessMime(daPath) {
  * Pushes local changes (modified, new, deleted) to the remote DA.
  *
  * @param {{
- *   client: import('./da-api.js').DaClient,
+ *   client: import('./content-api-client.js').ContentApiClient,
  *   org: string,
  *   repo: string,
  *   destRoot: string,

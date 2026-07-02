@@ -20,9 +20,8 @@ import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
 import { screenshotFilename } from './dev-config.js';
 import { toDaPath } from './aem-page-url.js';
-import {
-  DaClient, API_BACKEND_DA_LIVE, API_BACKEND_AEM_API,
-} from './da-api.js';
+import { API_BACKEND_AEM_API, API_BACKEND_DA_LIVE } from './content-api-shared.js';
+import { ContentApiClient } from './content-api-client.js';
 import { HttpRequestError } from './http-request-error.js';
 import {
   DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
@@ -142,13 +141,13 @@ async function setActivePreviewSite(siteId) {
   });
 }
 
-async function withDaClient(site, fn) {
+async function withContentClient(site, fn) {
   const accessToken = await getValidToken({
     tokenPath: tokenPath(),
     openBrowser: (url) => shell.openExternal(url),
   });
   const backend = site.apiBackend || API_BACKEND_DA_LIVE;
-  return fn(new DaClient(accessToken, backend));
+  return fn(new ContentApiClient(accessToken, backend));
 }
 
 async function createWindow() {
@@ -284,7 +283,7 @@ ipcMain.handle('da:list', async (_event, { siteId, daPath = '/' }) => {
     throw new Error('Site not found');
   }
 
-  return withDaClient(site, async (client) => {
+  return withContentClient(site, async (client) => {
     const items = await client.list(site.org, site.repo, daPath);
     return items.map((item) => ({
       ...item,
@@ -301,7 +300,7 @@ ipcMain.handle('da:get-source', async (_event, { siteId, daPath }) => {
     throw new Error('Site not found');
   }
 
-  return withDaClient(site, async (client) => {
+  return withContentClient(site, async (client) => {
     const result = await client.getSource(site.org, site.repo, daPath);
     if (!result) {
       return null;
@@ -355,7 +354,7 @@ ipcMain.handle('sync:check', async (event, {
     throw new Error('Site not found');
   }
 
-  return withDaClient(site, async (client) => {
+  return withContentClient(site, async (client) => {
     const allFiles = [];
     const reportProgress = (discovered) => {
       if (!event.sender.isDestroyed()) {
@@ -423,7 +422,7 @@ ipcMain.handle('sync:run', async (event, {
     const skip = skipConflicts?.length
       ? new Set(skipConflicts)
       : undefined;
-    const manifest = await withDaClient(site, (client) => runSync({
+    const manifest = await withContentClient(site, (client) => runSync({
       client,
       org: site.org,
       repo: site.repo,
@@ -518,7 +517,7 @@ ipcMain.handle('push:run', async (event, {
   const { signal } = pushAbortController;
 
   try {
-    const result = await withDaClient(site, (client) => runPush({
+    const result = await withContentClient(site, (client) => runPush({
       client,
       org: site.org,
       repo: site.repo,
@@ -592,7 +591,7 @@ ipcMain.handle('helix6:run-bulk', async (event, {
   const { signal } = helix6AbortController;
 
   try {
-    await withDaClient(site, async (client) => {
+    await withContentClient(site, async (client) => {
       await runHelix6BulkWorkflow({
         client,
         org: site.org,
