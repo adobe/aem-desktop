@@ -25,6 +25,7 @@ export function previewUrlOrigin(previewUrl) {
  * @param {{
  *   startPreviewServer: typeof import('./preview-server.js').startPreviewServer,
  *   createHeadHtmlCache: typeof import('./head-html.js').createHeadHtmlCache,
+ *   createMetadataJsonCache: typeof import('./metadata-json.js').createMetadataJsonCache,
  *   getSyncFolder: () => Promise<string|null>,
  *   resolveActiveSite: (siteId: string) => Promise<{
  *     org: string,
@@ -39,6 +40,7 @@ export function createPreviewServerRegistry(deps) {
    *   baseUrl: string,
    *   close: () => Promise<void>,
    *   headHtmlCache: ReturnType<typeof deps.createHeadHtmlCache>,
+   *   metadataJsonCache: ReturnType<typeof deps.createMetadataJsonCache>,
    * }>} */
   const serversByOrigin = new Map();
 
@@ -53,9 +55,11 @@ export function createPreviewServerRegistry(deps) {
     }
 
     const headHtmlCache = deps.createHeadHtmlCache();
+    const metadataJsonCache = deps.createMetadataJsonCache();
     const server = await deps.startPreviewServer({
       log: deps.log,
       headHtmlCache,
+      metadataJsonCache,
       getActiveSite: async () => {
         if (!activeSiteId) {
           return null;
@@ -80,6 +84,7 @@ export function createPreviewServerRegistry(deps) {
       baseUrl: server.baseUrl,
       close: server.close,
       headHtmlCache,
+      metadataJsonCache,
     };
     serversByOrigin.set(upstreamOrigin, entry);
     if (deps.log?.info) {
@@ -117,6 +122,7 @@ export function createPreviewServerRegistry(deps) {
 
       if (!sameOrigin) {
         entry.headHtmlCache.clear();
+        entry.metadataJsonCache.clear();
       }
 
       return activeBaseUrl;

@@ -20,6 +20,8 @@ import { unified } from 'unified';
 import rehypeParse from 'rehype-parse';
 import { select } from 'hast-util-select';
 import { toHtml } from 'hast-util-to-html';
+import { applySectionMetadataToTree } from './section-metadata-html.js';
+import { flipAnchorWrappedEmphasisInTree } from './preview-link-emphasis.js';
 
 /** @typedef {import('hast').Root} HastRoot */
 /** @typedef {import('hast').Element} HastElement */
@@ -176,6 +178,76 @@ function truncateWithEllipsis(s, max) {
 }
 
 const SEO_LABEL_SKIP = new Set(['title', 'description', 'image']);
+const SHEET_SEO_SKIP = new Set(['title', 'description', 'image', 'og image']);
+
+/**
+ * @param {{
+ *   title?: string,
+ *   description?: string,
+ *   image?: string,
+ *   absolutePageUrl?: string,
+ * }} sources
+ * @returns {string[]}
+ */
+export function buildSeoMetaLines(sources) {
+  const title = (sources.title || '').trim();
+  let description = (sources.description || '').trim();
+  description = truncateWithEllipsis(description, 200);
+  const image = (sources.image || '').trim();
+  const { absolutePageUrl = '' } = sources;
+
+  /** @type {string[]} */
+  const seoLines = [];
+
+  if (description) {
+    const e = escapeHtmlAttr(description);
+    seoLines.push(`<meta name="description" content="${e}">`);
+    seoLines.push(`<meta property="og:description" content="${e}">`);
+    seoLines.push(`<meta name="twitter:description" content="${e}">`);
+  }
+
+  if (title) {
+    const e = escapeHtmlAttr(title);
+    seoLines.push(`<meta property="og:title" content="${e}">`);
+    seoLines.push(`<meta name="twitter:title" content="${e}">`);
+  }
+
+  if (absolutePageUrl) {
+    seoLines.push(`<meta property="og:url" content="${escapeHtmlAttr(absolutePageUrl)}">`);
+  }
+
+  if (image) {
+    const e = escapeHtmlAttr(image);
+    const alt = escapeHtmlAttr(title || 'image');
+    seoLines.push(`<meta property="og:image" content="${e}">`);
+    seoLines.push(`<meta property="og:image:secure_url" content="${e}">`);
+    seoLines.push(`<meta property="og:image:alt" content="${alt}">`);
+    seoLines.push('<meta name="twitter:card" content="summary_large_image">');
+    seoLines.push(`<meta name="twitter:image" content="${e}">`);
+  } else if (title || description) {
+    seoLines.push('<meta name="twitter:card" content="summary">');
+  }
+
+  return seoLines;
+}
+
+/**
+ * @param {Record<string, string>|null|undefined} sheetRow
+ * @returns {{ title: string, description: string, image: string }}
+ */
+function sheetSeoSources(sheetRow) {
+  if (!sheetRow) {
+    return { title: '', description: '', image: '' };
+  }
+  const lowerMap = new Map(
+    Object.entries(sheetRow).map(([k, v]) => [k.toLowerCase(), String(v).trim()]),
+  );
+  return {
+    title: lowerMap.get('title') || '',
+    description: lowerMap.get('description') || '',
+    image: lowerMap.get('image') || lowerMap.get('og image') || '',
+  };
+}
 
 /**
  * @param {object | null | undefined} sheetRow row from /metadata.json matched for this URL
@@ -232,12 +304,35 @@ export function transformContentMetadataHtml(htmlFragment, options = {}) {
   try {
     tree = unified().use(rehypeParse, REHYPE_PARSE).parse(htmlFragment);
   } catch {
-    return { htmlFragment, metaTagsHtml: joinLines(buildSheetMetaLines(sheetRow)) };
+    const sheetSeo = sheetSeoSources(sheetRow);
+    return {
+      htmlFragment,
+      metaTagsHtml: joinLines([
+        ...buildSeoMetaLines({ ...sheetSeo, absolutePageUrl }),
+        ...buildSheetMetaLines(sheetRow, SHEET_SEO_SKIP),
+      ]),
+    };
   }
+
+  applySectionMetadataToTree(tree, { baseUrl: absolutePageUrl });
+  flipAnchorWrappedEmphasisInTree(tree);
 
   const metadataEl = select('div.metadata', tree);
   if (!metadataEl || metadataEl.type !== 'element' || !hasClass(metadataEl, 'metadata')) {
-    return { htmlFragment, metaTagsHtml: joinLines(buildSheetMetaLines(sheetRow)) };
+    const sheetSeo = sheetSeoSources(sheetRow);
+    const h1 = textContent(select('h1', tree)).trim();
+    return {
+      htmlFragment: toHtml(tree),
+      metaTagsHtml: joinLines([
+        ...buildSeoMetaLines({
+          title: sheetSeo.title || h1,
+          description: sheetSeo.description || truncateWithEllipsis(firstParagraphText(tree), 200),
+          image: sheetSeo.image || firstImgSrc(tree),
+          absolutePageUrl,
+        }),
+        ...buildSheetMetaLines(sheetRow, SHEET_SEO_SKIP),
+      ]),
+    };
   }
 
   const pairs = extractMetadataPairs(metadataEl);
@@ -264,37 +359,9 @@ export function transformContentMetadataHtml(htmlFragment, options = {}) {
   description = truncateWithEllipsis(description, 200);
   const image = (lowerMap.get('image') || lowerMap.get('og image') || firstImgSrc(tree) || '').trim();
 
-  /** @type {string[]} */
-  const seoLines = [];
-
-  if (description) {
-    const e = escapeHtmlAttr(description);
-    seoLines.push(`<meta name="description" content="${e}">`);
-    seoLines.push(`<meta property="og:description" content="${e}">`);
-    seoLines.push(`<meta name="twitter:description" content="${e}">`);
-  }
-
-  if (title) {
-    const e = escapeHtmlAttr(title);
-    seoLines.push(`<meta property="og:title" content="${e}">`);
-    seoLines.push(`<meta name="twitter:title" content="${e}">`);
-  }
-
-  if (absolutePageUrl) {
-    seoLines.push(`<meta property="og:url" content="${escapeHtmlAttr(absolutePageUrl)}">`);
-  }
-
-  if (image) {
-    const e = escapeHtmlAttr(image);
-    const alt = escapeHtmlAttr(title || 'image');
-    seoLines.push(`<meta property="og:image" content="${e}">`);
-    seoLines.push(`<meta property="og:image:secure_url" content="${e}">`);
-    seoLines.push(`<meta property="og:image:alt" content="${alt}">`);
-    seoLines.push('<meta name="twitter:card" content="summary_large_image">');
-    seoLines.push(`<meta name="twitter:image" content="${e}">`);
-  } else {
-    seoLines.push('<meta name="twitter:card" content="summary">');
-  }
+  const seoLines = buildSeoMetaLines({
+    title, description, image, absolutePageUrl,
+  });
 
   /** @type {string[]} */
   const pairLines = [];

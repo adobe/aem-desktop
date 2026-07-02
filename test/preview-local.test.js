@@ -55,6 +55,8 @@ test('prepareLocalHtml wraps body-only HTML with head fragment and meta tags', a
   assert.match(out, /<meta property="og:title" content="Hello">/);
   assert.doesNotMatch(out, /class="metadata"/);
   assert.match(out, /<link rel="stylesheet" href="\/styles\.css"\/>/);
+  assert.match(out, /<body>\s*<header><\/header><main>/);
+  assert.match(out, /<h1>Hello<\/h1>/);
 });
 
 test('readLocalPreviewContent serves local json unchanged', async () => {

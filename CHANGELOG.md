@@ -1,3 +1,17 @@
+# [1.3.0](https://github.com/adobe/aem-desktop/compare/v1.2.1...v1.3.0) (2026-06-29)
+
+
+### Features
+
+* add pull and revert ([c049c97](https://github.com/adobe/aem-desktop/commit/c049c976aa92b5c59203e5e364caa9cdb50e49f4))
+
+## [1.2.1](https://github.com/adobe/aem-desktop/compare/v1.2.0...v1.2.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* sync performance, preview cache isolation, push URLs, and tree badges ([9d65805](https://github.com/adobe/aem-desktop/commit/9d658050ec400f68026202b67f43591e0bc907e0))
+
 # [1.2.0](https://github.com/adobe/aem-desktop/compare/v1.1.4...v1.2.0) (2026-06-08)
 
 

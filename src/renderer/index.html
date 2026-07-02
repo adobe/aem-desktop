@@ -89,6 +89,7 @@
             <span class="rail-header-spacer"></span>
             <div class="rail-header-actions">
               <button type="button" id="review-cancel" class="s2-btn">Cancel</button>
+              <button type="button" id="review-revert" class="s2-btn" disabled>Revert selected</button>
               <button type="button" id="review-push" class="s2-btn s2-btn-primary" disabled>Push changes</button>
             </div>
           </div>
@@ -179,6 +180,47 @@
           <span class="modal-actions-spacer"></span>
           <button type="button" id="sync-start" class="btn primary" disabled>Sync</button>
           <button type="button" id="sync-cancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="pull-modal" class="modal-overlay hidden" hidden>
+      <div class="modal">
+        <h2 class="modal-title">Pull Remote Changes</h2>
+        <div class="modal-body">
+          <p id="pull-summary" class="sync-info"></p>
+          <div class="sync-folder-row">
+            <span id="pull-folder-path" class="sync-folder-path">No folder selected</span>
+          </div>
+          <label class="sync-option">
+            <input type="checkbox" id="pull-include-binaries" />
+            <span>Include binary files (images, videos, etc.)</span>
+          </label>
+          <div id="pull-empty-notice" class="sync-notice info hidden" hidden>
+            <p class="sync-notice-text">No remote changes found in your synced files.</p>
+          </div>
+          <div id="pull-file-section" class="sync-selection hidden" hidden>
+            <p class="sync-selection-label">Updated remotely</p>
+            <ul id="pull-file-list" class="sync-path-list"></ul>
+          </div>
+          <div id="pull-conflict-warning" class="sync-conflict-warning hidden" hidden>
+            <p id="pull-conflict-text" class="sync-conflict-text"></p>
+            <ul id="pull-conflict-list" class="sync-path-list"></ul>
+            <label class="sync-option">
+              <input type="checkbox" id="pull-overwrite-conflicts" />
+              <span>Overwrite local changes</span>
+            </label>
+          </div>
+          <div id="pull-progress" class="sync-progress hidden" hidden>
+            <div class="sync-progress-bar">
+              <div id="pull-progress-fill" class="sync-progress-fill"></div>
+            </div>
+            <p id="pull-progress-text" class="sync-progress-text"></p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <span class="modal-actions-spacer"></span>
+          <button type="button" id="pull-start" class="btn primary" disabled>Pull</button>
+          <button type="button" id="pull-cancel" class="btn">Cancel</button>
         </div>
       </div>
     </div>

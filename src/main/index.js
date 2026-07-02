@@ -35,11 +35,12 @@ import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
 import { startPreviewServer } from './preview-server.js';
 import { createPreviewServerRegistry } from './preview-server-registry.js';
 import { createHeadHtmlCache } from './head-html.js';
+import { createMetadataJsonCache } from './metadata-json.js';
 import {
   runSync, syncRoot, checkSyncStatus,
   collectFolder, isBinaryExtension,
   checkPushStatus, runPush, computePushDiffs,
-  checkLocalSyncBadges,
+  checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
 } from './da-sync.js';
 import { runHelix6BulkWorkflow } from './helix6-bulk.js';
 import log from './logger.js';
@@ -485,6 +486,75 @@ ipcMain.handle('sync:local-badges', async (_event, {
   });
 });
 
+let pullAbortController = null;
+
+ipcMain.handle('pull:check', async (event, {
+  siteId, destFolder, includeBinaries,
+}) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  return withContentClient(site, (client) => checkPullStatus({
+    client,
+    org: site.org,
+    repo: site.repo,
+    destRoot: destFolder,
+    includeBinaries,
+    onProgress: (data) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('pull:check-progress', data);
+      }
+    },
+  }));
+});
+
+ipcMain.handle('pull:run', async (event, {
+  siteId, destFolder, files,
+}) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  pullAbortController = new AbortController();
+  const { signal } = pullAbortController;
+
+  try {
+    const result = await withContentClient(site, (client) => runPull({
+      client,
+      org: site.org,
+      repo: site.repo,
+      destRoot: destFolder,
+      files,
+      signal,
+      onProgress: (data) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('pull:progress', data);
+        }
+      },
+    }));
+    return { ok: true, ...result };
+  } catch (err) {
+    if (signal.aborted) {
+      return { ok: false, cancelled: true };
+    }
+    throw err;
+  } finally {
+    pullAbortController = null;
+  }
+});
+
+ipcMain.handle('pull:cancel', () => {
+  if (pullAbortController) {
+    pullAbortController.abort();
+    pullAbortController = null;
+  }
+});
+
 let pushAbortController = null;
 let helix6AbortController = null;
 
@@ -502,6 +572,51 @@ ipcMain.handle('push:check', async (_event, {
     org: site.org,
     repo: site.repo,
   });
+});
+
+let revertAbortController = null;
+
+ipcMain.handle('revert:run', async (event, {
+  siteId, destFolder, files,
+}) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  revertAbortController = new AbortController();
+  const { signal } = revertAbortController;
+
+  try {
+    const result = await runRevert({
+      org: site.org,
+      repo: site.repo,
+      destRoot: destFolder,
+      files,
+      signal,
+      onProgress: (data) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('revert:progress', data);
+        }
+      },
+    });
+    return { ok: true, ...result };
+  } catch (err) {
+    if (signal.aborted) {
+      return { ok: false, cancelled: true };
+    }
+    throw err;
+  } finally {
+    revertAbortController = null;
+  }
+});
+
+ipcMain.handle('revert:cancel', () => {
+  if (revertAbortController) {
+    revertAbortController.abort();
+    revertAbortController = null;
+  }
 });
 
 ipcMain.handle('push:run', async (event, {
@@ -650,6 +765,7 @@ app.whenReady().then(async () => {
   previewRegistry = createPreviewServerRegistry({
     startPreviewServer,
     createHeadHtmlCache,
+    createMetadataJsonCache,
     getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
     resolveActiveSite: resolvePreviewSite,
     log,

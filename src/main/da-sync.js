@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
-  mkdir, readdir, readFile, stat, writeFile, utimes, copyFile,
+  mkdir, readdir, readFile, stat, writeFile, utimes, copyFile, rm,
 } from 'node:fs/promises';
 import {
   join, dirname, relative, extname,
@@ -408,6 +408,201 @@ export async function checkSyncStatus({
 }
 
 /**
+ * @param {string|undefined|null} prevLastModified
+ * @param {string|undefined|null} remoteLastModified
+ * @returns {boolean}
+ */
+function isRemoteChanged(prevLastModified, remoteLastModified) {
+  const hasTimestamps = remoteLastModified && prevLastModified;
+  if (hasTimestamps) {
+    return String(remoteLastModified) !== String(prevLastModified);
+  }
+  return Boolean(remoteLastModified && !prevLastModified);
+}
+
+/**
+ * @param {import('./da-api.js').DaClient} client
+ * @param {string} org
+ * @param {string} repo
+ * @param {string[]} daPaths
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Map<string, { lastModified?: string, ext?: string }>>}
+ */
+async function fetchRemoteMetaForPaths(client, org, repo, daPaths, signal) {
+  const folders = new Set(['/']);
+  for (const daPath of daPaths) {
+    const lastSlash = daPath.lastIndexOf('/');
+    folders.add(lastSlash > 0 ? daPath.slice(0, lastSlash) : '/');
+  }
+
+  const remoteMeta = new Map();
+  const folderList = [...folders];
+
+  for (let i = 0; i < folderList.length; i += CONCURRENCY) {
+    if (signal?.aborted) {
+      break;
+    }
+    const batch = folderList.slice(i, i + CONCURRENCY);
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(batch.map(async (folder) => {
+      const listing = await client.list(org, repo, folder);
+      for (const entry of listing) {
+        if (entry.ext === undefined) {
+          continue; // eslint-disable-line no-continue
+        }
+        const entryDaPath = toDaPath(entry.path, org, repo);
+        remoteMeta.set(entryDaPath, {
+          lastModified: entry.lastModified,
+          ext: entry.ext,
+        });
+      }
+    }));
+  }
+
+  return remoteMeta;
+}
+
+/**
+ * Compares manifest entries against remote list metadata to find pull candidates.
+ *
+ * @param {{
+ *   destRoot: string,
+ *   org: string,
+ *   repo: string,
+ *   manifestFiles: Array<{ daPath: string, lastModified?: string }>,
+ *   remoteMeta: Map<string, { lastModified?: string, ext?: string }>,
+ *   includeBinaries?: boolean,
+ * }} options
+ * @returns {Promise<{
+ *   outdated: string[],
+ *   conflicts: string[],
+ *   files: Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>,
+ * }>}
+ */
+export async function evaluatePullStatus({
+  destRoot, org, repo, manifestFiles, remoteMeta, includeBinaries = true,
+}) {
+  const outdated = [];
+  const conflicts = [];
+  /** @type {Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>} */
+  const files = [];
+
+  for (const prev of manifestFiles) {
+    const remote = remoteMeta.get(prev.daPath);
+    if (!remote) {
+      continue; // eslint-disable-line no-continue
+    }
+
+    const ext = remote.ext || extname(prev.daPath).slice(1);
+    if (!includeBinaries && isBinaryExtension(ext)) {
+      continue; // eslint-disable-line no-continue
+    }
+
+    if (!isRemoteChanged(prev.lastModified, remote.lastModified)) {
+      continue; // eslint-disable-line no-continue
+    }
+
+    const { workingPath, originalPath } = syncPaths(destRoot, org, repo, prev.daPath);
+    const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+    const workBuf = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
+    const localModified = origBuf && workBuf && !origBuf.equals(workBuf);
+
+    const fileEntry = {
+      daPath: prev.daPath,
+      lastModified: remote.lastModified,
+      ext,
+      conflict: localModified,
+    };
+    files.push(fileEntry);
+
+    if (localModified) {
+      conflicts.push(prev.daPath);
+    } else {
+      outdated.push(prev.daPath);
+    }
+  }
+
+  return { outdated, conflicts, files };
+}
+
+/**
+ * Finds files that changed on the remote since the last sync.
+ *
+ * @param {{
+ *   client: import('./da-api.js').DaClient,
+ *   org: string,
+ *   repo: string,
+ *   destRoot: string,
+ *   includeBinaries?: boolean,
+ *   signal?: AbortSignal,
+ *   onProgress?: (data: { checked: number, total: number }) => void,
+ * }} options
+ */
+export async function checkPullStatus({
+  client, org, repo, destRoot, includeBinaries = true, signal, onProgress,
+}) {
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath(destRoot, org, repo), 'utf8'));
+  } catch {
+    return {
+      outdated: [],
+      conflicts: [],
+      outdatedCount: 0,
+      conflictCount: 0,
+      totalCount: 0,
+      files: [],
+    };
+  }
+
+  const manifestFiles = manifest.files || [];
+  if (manifestFiles.length === 0) {
+    return {
+      outdated: [],
+      conflicts: [],
+      outdatedCount: 0,
+      conflictCount: 0,
+      totalCount: 0,
+      files: [],
+    };
+  }
+
+  onProgress?.({ checked: 0, total: manifestFiles.length });
+
+  const daPaths = manifestFiles.map((f) => f.daPath);
+  const remoteMeta = await fetchRemoteMetaForPaths(client, org, repo, daPaths, signal);
+
+  if (signal?.aborted) {
+    return {
+      outdated: [],
+      conflicts: [],
+      outdatedCount: 0,
+      conflictCount: 0,
+      totalCount: 0,
+      files: [],
+    };
+  }
+
+  const result = await evaluatePullStatus({
+    destRoot,
+    org,
+    repo,
+    manifestFiles,
+    remoteMeta,
+    includeBinaries,
+  });
+
+  onProgress?.({ checked: manifestFiles.length, total: manifestFiles.length });
+
+  return {
+    ...result,
+    outdatedCount: result.outdated.length,
+    conflictCount: result.conflicts.length,
+    totalCount: result.files.length,
+  };
+}
+
+/**
  * Recursively collects all files under a DA folder (up to CONCURRENCY parallel list calls).
  *
  * @param {import('./content-api-client.js').ContentApiClient} client
@@ -677,6 +872,90 @@ export async function runSync({
 }
 
 /**
+ * Downloads remote updates for previously synced files and refreshes the manifest.
+ *
+ * @param {{
+ *   client: import('./da-api.js').DaClient,
+ *   org: string,
+ *   repo: string,
+ *   destRoot: string,
+ *   files: Array<{ daPath: string, lastModified?: string, ext?: string }>,
+ *   onProgress: (data: object) => void,
+ *   signal?: AbortSignal,
+ * }} options
+ */
+export async function runPull({
+  client, org, repo, destRoot, files, onProgress, signal,
+}) {
+  const total = files.length;
+  onProgress({
+    phase: 'downloading', completed: 0, total, current: '',
+  });
+
+  const prevManifestMap = new Map();
+  try {
+    const mPath = manifestPath(destRoot, org, repo);
+    const prev = JSON.parse(await readFile(mPath, 'utf8'));
+    for (const f of prev.files || []) {
+      prevManifestMap.set(f.daPath, f);
+    }
+  } catch { /* no previous manifest */ }
+
+  let completed = 0;
+  const newEntries = [];
+  const downloadedPaths = new Set();
+
+  for (let i = 0; i < total; i += CONCURRENCY) {
+    if (signal?.aborted) {
+      throw new Error('Pull cancelled');
+    }
+
+    const batch = files.slice(i, i + CONCURRENCY);
+    const results = await Promise.all( // eslint-disable-line no-await-in-loop
+      batch.map((file) => syncOneFile(client, org, repo, destRoot, file)),
+    );
+
+    for (const entry of results) {
+      if (entry) {
+        newEntries.push(entry);
+        downloadedPaths.add(entry.daPath);
+      }
+    }
+
+    completed += batch.length;
+    const last = batch[batch.length - 1];
+    onProgress({
+      phase: 'downloading', completed, total, current: last.daPath,
+    });
+  }
+
+  const manifestFiles = [];
+  for (const [p, entry] of prevManifestMap) {
+    if (!downloadedPaths.has(p)) {
+      manifestFiles.push(entry);
+    }
+  }
+  manifestFiles.push(...newEntries);
+
+  const manifest = {
+    org,
+    repo,
+    syncedAt: new Date().toISOString(),
+    files: manifestFiles,
+  };
+
+  const mPath = manifestPath(destRoot, org, repo);
+  await mkdir(dirname(mPath), { recursive: true });
+  await writeFile(mPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+  onProgress({
+    phase: 'done', completed: total, total, current: '',
+  });
+
+  return { pulled: newEntries.length };
+}
+
+/**
  * Scans the local sync directory for pushable changes:
  * modified files, new files, and deleted files.
  *
@@ -725,6 +1004,96 @@ export async function checkPushStatus({ destRoot, org, repo }) {
   }
 
   return { modified, localNew, deleted };
+}
+
+/**
+ * @param {string} targetPath
+ * @param {{ lastModified?: string }|undefined} manifestEntry
+ * @param {string} fallbackMtimePath
+ */
+async function restoreWorkingMtime(targetPath, manifestEntry, fallbackMtimePath) {
+  let mtime = null;
+  if (manifestEntry?.lastModified) {
+    const parsed = new Date(manifestEntry.lastModified);
+    if (!Number.isNaN(parsed.getTime())) {
+      mtime = parsed;
+    }
+  }
+  if (!mtime) {
+    try {
+      mtime = (await stat(fallbackMtimePath)).mtime;
+    } catch {
+      return;
+    }
+  }
+  await utimes(targetPath, mtime, mtime);
+}
+
+/**
+ * Restores selected local changes from `.aem` originals (or removes local-only files).
+ *
+ * @param {{
+ *   destRoot: string,
+ *   org: string,
+ *   repo: string,
+ *   files: Array<{ daPath: string, status: string }>,
+ *   onProgress: (data: object) => void,
+ *   signal?: AbortSignal,
+ * }} options
+ * @returns {Promise<{ reverted: number }>}
+ */
+export async function runRevert({
+  destRoot, org, repo, files, onProgress, signal,
+}) {
+  const manifestMap = new Map();
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath(destRoot, org, repo), 'utf8'));
+    for (const f of manifest.files || []) {
+      manifestMap.set(f.daPath, f);
+    }
+  } catch { /* no manifest */ }
+
+  const total = files.length;
+  let completed = 0;
+
+  onProgress({
+    phase: 'reverting', completed: 0, total, current: '',
+  });
+
+  for (const file of files) {
+    if (signal?.aborted) {
+      throw new Error('Revert cancelled');
+    }
+
+    const { workingPath, originalPath } = syncPaths(destRoot, org, repo, file.daPath);
+
+    if (file.status === 'new') {
+      await rm(workingPath, { force: true }); // eslint-disable-line no-await-in-loop
+    } else {
+      const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+      if (!origBuf) {
+        throw new Error(`Missing original for ${file.daPath}`);
+      }
+      await mkdir(dirname(workingPath), { recursive: true }); // eslint-disable-line
+      await copyFile(originalPath, workingPath); // eslint-disable-line no-await-in-loop
+      await restoreWorkingMtime( // eslint-disable-line no-await-in-loop
+        workingPath,
+        manifestMap.get(file.daPath),
+        originalPath,
+      );
+    }
+
+    completed += 1;
+    onProgress({
+      phase: 'reverting', completed, total, current: file.daPath,
+    });
+  }
+
+  onProgress({
+    phase: 'done', completed: total, total, current: '',
+  });
+
+  return { reverted: total };
 }
 
 const MIME_BY_EXT = {

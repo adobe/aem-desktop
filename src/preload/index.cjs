@@ -57,10 +57,31 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     return () => ipcRenderer.removeListener('sync:check-progress', handler);
   },
 
+  checkPull: (options) => ipcRenderer.invoke('pull:check', options),
+  runPull: (options) => ipcRenderer.invoke('pull:run', options),
+  cancelPull: () => ipcRenderer.invoke('pull:cancel'),
+  onPullProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('pull:progress', handler);
+    return () => ipcRenderer.removeListener('pull:progress', handler);
+  },
+  onPullCheckProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('pull:check-progress', handler);
+    return () => ipcRenderer.removeListener('pull:check-progress', handler);
+  },
+
   checkPush: (options) => ipcRenderer.invoke('push:check', options),
   getPushDiffs: (options) => ipcRenderer.invoke('push:diffs', options),
   runPush: (options) => ipcRenderer.invoke('push:run', options),
   cancelPush: () => ipcRenderer.invoke('push:cancel'),
+  runRevert: (options) => ipcRenderer.invoke('revert:run', options),
+  cancelRevert: () => ipcRenderer.invoke('revert:cancel'),
+  onRevertProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('revert:progress', handler);
+    return () => ipcRenderer.removeListener('revert:progress', handler);
+  },
   onPushProgress: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('push:progress', handler);

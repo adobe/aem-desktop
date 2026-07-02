@@ -17,6 +17,7 @@ import { mkdir, writeFile, rm } from 'node:fs/promises';
 import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
+  evaluatePullStatus,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -299,6 +300,41 @@ test('checkLocalSyncBadges classifies listed files from manifest', async () => {
     });
 
     assert.equal(badges['/page.html'], 'modified');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('evaluatePullStatus finds outdated and conflict files', async () => {
+  const dest = join(tmpdir(), `aem-pull-test-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(workDir, 'a.html'), 'local edit');
+    await writeFile(join(aemDir, 'a.html'), 'original a');
+    await writeFile(join(workDir, 'b.html'), 'original b');
+    await writeFile(join(aemDir, 'b.html'), 'original b');
+    const manifestFiles = [
+      { daPath: '/a.html', lastModified: '2026-01-01T00:00:00Z' },
+      { daPath: '/b.html', lastModified: '2026-01-01T00:00:00Z' },
+    ];
+    const remoteMeta = new Map([
+      ['/a.html', { lastModified: '2026-02-01T00:00:00Z', ext: 'html' }],
+      ['/b.html', { lastModified: '2026-02-01T00:00:00Z', ext: 'html' }],
+    ]);
+
+    const result = await evaluatePullStatus({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      manifestFiles,
+      remoteMeta,
+    });
+
+    assert.deepEqual(result.outdated, ['/b.html']);
+    assert.deepEqual(result.conflicts, ['/a.html']);
+    assert.equal(result.files.length, 2);
   } finally {
     await rm(dest, { recursive: true, force: true });
   }

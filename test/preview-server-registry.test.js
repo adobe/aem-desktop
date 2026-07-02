@@ -38,6 +38,10 @@ test('preview server registry assigns ports per upstream origin', async () => {
       clear: () => {},
       resolve: async () => '',
     }),
+    createMetadataJsonCache: () => ({
+      clear: () => {},
+      resolveSheetRow: async () => null,
+    }),
     getSyncFolder: async () => null,
     resolveActiveSite: async (siteId) => ({
       org: 'org',
@@ -75,6 +79,10 @@ test('preview server registry clears active base URL when deactivated', async ()
     createHeadHtmlCache: () => ({
       clear: () => {},
       resolve: async () => '',
+    }),
+    createMetadataJsonCache: () => ({
+      clear: () => {},
+      resolveSheetRow: async () => null,
     }),
     getSyncFolder: async () => null,
     resolveActiveSite: async () => null,
