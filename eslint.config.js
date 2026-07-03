@@ -51,6 +51,13 @@ export default defineConfig([
     },
   },
   {
+    // Preview login preload runs in the admin page main world (browser globals).
+    files: ['src/preload/preview-login-preload.cjs'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+    },
+  },
+  {
     // Renderer code runs in the Chromium browser context.
     files: ['src/renderer/**/*.js'],
     languageOptions: {
