@@ -45,6 +45,10 @@ const SKIP_REQUEST_HEADERS = new Set([
   'host',
   'proxy-connection',
   'if-modified-since',
+  // The webview sends a localhost Origin on CORS requests (e.g. module scripts).
+  // EDS rejects that foreign origin with a 403, so strip it — the proxy stands in
+  // for the .aem.page origin and presents requests as same-origin.
+  'origin',
 ]);
 
 const SKIP_RESPONSE_HEADERS = new Set([
@@ -166,6 +170,60 @@ function isMainFrameDocumentRequest(req) {
 }
 
 /**
+ * @param {number} status
+ * @param {string|null|undefined} siteToken
+ * @returns {boolean}
+ */
+function upstreamStatusNeedsAuth(status, siteToken) {
+  if (status === 401) {
+    return true;
+  }
+  // Without a site token, a document 403 on preview usually means access control
+  // rather than a post-login permission denial.
+  return status === 403 && !siteToken;
+}
+
+/**
+ * @param {string} upstreamUrl
+ * @param {string|null|undefined} siteToken
+ * @param {typeof fetch} fetchFn
+ * @returns {Promise<boolean>}
+ */
+async function upstreamRequiresAuth(upstreamUrl, siteToken, fetchFn) {
+  if (siteToken) {
+    return false;
+  }
+  try {
+    const resp = await fetchFn(upstreamUrl, { method: 'HEAD', redirect: 'follow' });
+    return upstreamStatusNeedsAuth(resp.status, siteToken);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {{
+ *   org: string,
+ *   repo: string,
+ *   branch?: string,
+ *   previewUrl: string,
+ *   apiBackend?: string,
+ * }} site
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} statusCode
+ * @param {string|null|undefined} siteToken
+ * @param {((site: object) => void)|undefined} onAuthRequired
+ */
+function maybeNotifyAuthRequired(site, req, statusCode, siteToken, onAuthRequired) {
+  if (!onAuthRequired || !isMainFrameDocumentRequest(req)) {
+    return;
+  }
+  if (upstreamStatusNeedsAuth(statusCode, siteToken)) {
+    onAuthRequired(site);
+  }
+}
+
+/**
  * @param {{
  *   getActiveSite: () => Promise<{
  *     org: string,
@@ -241,7 +299,10 @@ export async function startPreviewServer(deps) {
     if (syncFolder) {
       const localRoot = syncRoot(syncFolder, site.org, site.repo);
       const localFile = await resolveLocalContentFile(localRoot, previewPath);
-      if (localFile) {
+      const authBlocked = localFile
+        && isMainFrameDocumentRequest(req)
+        && await upstreamRequiresAuth(upstreamUrl, token, fetchFn);
+      if (localFile && !authBlocked) {
         try {
           const headHtml = await headHtmlCache.resolve({
             previewUrlOrigin: site.previewUrl,
@@ -270,6 +331,8 @@ export async function startPreviewServer(deps) {
         } catch (err) {
           scope.warn(`failed to read local file ${localFile.filePath}: ${err.message}`);
         }
+      } else if (authBlocked) {
+        scope.info(`local ${localFile.relativePath} blocked — upstream requires auth`);
       }
     }
 
@@ -277,9 +340,7 @@ export async function startPreviewServer(deps) {
     try {
       await proxyUpstream(req, res, upstreamUrl, proxyHost, token, fetchFn);
       scope.info(`proxy ${pathWithQuery} -> ${upstreamUrl} (${res.statusCode})`);
-      if (res.statusCode === 401 && isMainFrameDocumentRequest(req)) {
-        deps.onAuthRequired?.(site);
-      }
+      maybeNotifyAuthRequired(site, req, res.statusCode, token, deps.onAuthRequired);
     } catch (err) {
       scope.error(`proxy failed for ${upstreamUrl}: ${err.message}`);
       if (!res.headersSent) {

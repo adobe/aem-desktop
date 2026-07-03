@@ -472,6 +472,7 @@ function ensurePreviewWebview(origin) {
         console.info(`[preview] loaded ${webview.getURL()}`);
       }
     });
+    checkPreviewAuthError(webview);
   });
 
   return webview;
@@ -537,6 +538,33 @@ function handlePreviewAuthRequired({ previewUrl } = {}) {
   }
   previewAuthPrompted = true;
   renderPreviewSignIn();
+}
+
+async function detectPreviewAuthStatus(webview) {
+  if (!webview || webview !== previewWebview) {
+    return null;
+  }
+  try {
+    return await webview.executeJavaScript(`
+      (() => {
+        const pre = document.querySelector('body > pre');
+        if (!pre) return null;
+        const text = pre.textContent.trim();
+        if (text === '401 Unauthorized') return 401;
+        if (text === '403 Forbidden') return 403;
+        return null;
+      })()
+    `, true);
+  } catch {
+    return null;
+  }
+}
+
+async function checkPreviewAuthError(webview) {
+  const status = await detectPreviewAuthStatus(webview);
+  if (status === 401 || status === 403) {
+    handlePreviewAuthRequired({ previewUrl: activeSite()?.previewUrl });
+  }
 }
 
 function findItemInCache(daPath) {

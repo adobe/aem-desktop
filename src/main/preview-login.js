@@ -49,7 +49,7 @@ export function openPreviewLogin({
   return new Promise((resolve, reject) => {
     const win = new BrowserWindow({
       parent,
-      width: 520,
+      width: 570,
       height: 720,
       show: true,
       title: 'Sign in to preview',
