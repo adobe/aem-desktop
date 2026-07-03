@@ -27,6 +27,20 @@ export function previewUrlOrigin(previewUrl) {
  *   createHeadHtmlCache: typeof import('./head-html.js').createHeadHtmlCache,
  *   createMetadataJsonCache: typeof import('./metadata-json.js').createMetadataJsonCache,
  *   getSyncFolder: () => Promise<string|null>,
+ *   getToken?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => Promise<string|null>,
+ *   onAuthRequired?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => void,
  *   resolveActiveSite: (siteId: string) => Promise<{
  *     org: string,
  *     repo: string,
@@ -34,9 +48,6 @@ export function previewUrlOrigin(previewUrl) {
  *     previewUrl: string,
  *     apiBackend?: string,
  *   }|null>,
- *   getSiteToken: (org: string, repo: string) => Promise<string|null>,
- *   saveSiteToken: (org: string, repo: string, siteToken: string) => Promise<void>,
- *   onSiteTokenSaved?: (payload: { org: string, repo: string, siteToken: string }) => void,
  *   log?: import('electron-log').MainLogger,
  * }} deps
  */
@@ -46,17 +57,12 @@ export function createPreviewServerRegistry(deps) {
    *   close: () => Promise<void>,
    *   headHtmlCache: ReturnType<typeof deps.createHeadHtmlCache>,
    *   metadataJsonCache: ReturnType<typeof deps.createMetadataJsonCache>,
-   *   loginSession: ReturnType<import('./site-auth.js').createSiteLoginSession>,
-   *   activeOrg: string|null,
-   *   activeRepo: string|null,
    * }>} */
   const serversByOrigin = new Map();
 
   let activeSiteId = null;
   let activeUpstreamOrigin = null;
   let activeBaseUrl = null;
-  /** @type {{ org: string, repo: string }|null} */
-  let activeSiteIdentity = null;
 
   async function ensureServer(upstreamOrigin) {
     const existing = serversByOrigin.get(upstreamOrigin);
@@ -66,9 +72,6 @@ export function createPreviewServerRegistry(deps) {
 
     const headHtmlCache = deps.createHeadHtmlCache();
     const metadataJsonCache = deps.createMetadataJsonCache();
-    /** @type {{ org: string, repo: string }|null} */
-    let serverSiteIdentity = null;
-
     const server = await deps.startPreviewServer({
       log: deps.log,
       headHtmlCache,
@@ -88,33 +91,11 @@ export function createPreviewServerRegistry(deps) {
         } catch {
           return null;
         }
-        serverSiteIdentity = { org: site.org, repo: site.repo };
         return site;
       },
       getSyncFolder: deps.getSyncFolder,
-      getSiteToken: async () => {
-        if (!serverSiteIdentity) {
-          return null;
-        }
-        return deps.getSiteToken(serverSiteIdentity.org, serverSiteIdentity.repo);
-      },
-      onSiteToken: async (siteToken) => {
-        if (!serverSiteIdentity) {
-          throw new Error('No active site for site token');
-        }
-        await deps.saveSiteToken(
-          serverSiteIdentity.org,
-          serverSiteIdentity.repo,
-          siteToken,
-        );
-        headHtmlCache.clear();
-        metadataJsonCache.clear();
-        deps.onSiteTokenSaved?.({
-          org: serverSiteIdentity.org,
-          repo: serverSiteIdentity.repo,
-          siteToken,
-        });
-      },
+      getToken: deps.getToken,
+      onAuthRequired: deps.onAuthRequired,
     });
 
     const entry = {
@@ -122,9 +103,6 @@ export function createPreviewServerRegistry(deps) {
       close: server.close,
       headHtmlCache,
       metadataJsonCache,
-      loginSession: server.loginSession,
-      activeOrg: null,
-      activeRepo: null,
     };
     serversByOrigin.set(upstreamOrigin, entry);
     if (deps.log?.info) {
@@ -150,7 +128,6 @@ export function createPreviewServerRegistry(deps) {
         activeSiteId = null;
         activeUpstreamOrigin = null;
         activeBaseUrl = null;
-        activeSiteIdentity = null;
         return null;
       }
 
@@ -163,10 +140,7 @@ export function createPreviewServerRegistry(deps) {
       }
 
       activeSiteId = siteId;
-      activeSiteIdentity = { org: site.org, repo: site.repo };
       const entry = await ensureServer(upstreamOrigin);
-      entry.activeOrg = site.org;
-      entry.activeRepo = site.repo;
       activeUpstreamOrigin = upstreamOrigin;
       activeBaseUrl = entry.baseUrl;
 
@@ -188,9 +162,22 @@ export function createPreviewServerRegistry(deps) {
       return activeUpstreamOrigin;
     },
 
-    /** @returns {{ org: string, repo: string }|null} */
-    getActiveSiteIdentity() {
-      return activeSiteIdentity;
+    /**
+     * Drops cached head.html. Call after a sign-in so a head that was fetched
+     * empty (401) while unauthenticated is re-fetched with the new site token.
+     *
+     * @param {string} [upstreamOrigin] limit to one origin; omit to clear all
+     */
+    clearHeadCache(upstreamOrigin) {
+      if (upstreamOrigin) {
+        serversByOrigin.get(upstreamOrigin)?.headHtmlCache.clear();
+        serversByOrigin.get(upstreamOrigin)?.metadataJsonCache.clear();
+        return;
+      }
+      for (const entry of serversByOrigin.values()) {
+        entry.headHtmlCache.clear();
+        entry.metadataJsonCache.clear();
+      }
     },
 
     async closeAll() {
@@ -200,7 +187,6 @@ export function createPreviewServerRegistry(deps) {
       activeSiteId = null;
       activeUpstreamOrigin = null;
       activeBaseUrl = null;
-      activeSiteIdentity = null;
     },
   };
 }

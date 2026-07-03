@@ -36,7 +36,6 @@ const state = {
   sites: [],
   activeSiteId: null,
   authenticated: false,
-  siteAuthenticated: false,
   icons: null,
   tree: {
     cache: {},
@@ -73,9 +72,6 @@ const els = {
   signInBtn: document.getElementById('sign-in-btn'),
   signOutBtn: document.getElementById('sign-out-btn'),
   contentBody: document.getElementById('content-body'),
-  previewAuthOverlay: document.getElementById('preview-auth-overlay'),
-  previewAuthDescription: document.getElementById('preview-auth-description'),
-  previewAuthLogin: document.getElementById('preview-auth-login'),
   syncModal: document.getElementById('sync-modal'),
   syncPickFolder: document.getElementById('sync-pick-folder'),
   syncFolderPath: document.getElementById('sync-folder-path'),
@@ -204,7 +200,6 @@ async function enterBrowse(siteId) {
   }
   state.activeSiteId = siteId;
   await window.aemDesktop.setActivePreviewSite(siteId);
-  await refreshSiteAuthStatus();
   resetTree();
   renderContentPlaceholder('Select a file from the folder list.');
   showView('browse');
@@ -344,86 +339,10 @@ let previewWebview = null;
 let previewOrigin = null;
 let previewDevEnabled = null;
 let previewDevToolsAutoOpened = false;
-/** @type {401|403|null} */
-let previewAuthStatus = null;
-
-function hidePreviewAuthOverlay() {
-  previewAuthStatus = null;
-  hide(els.previewAuthOverlay);
-}
-
-function updatePreviewAuthOverlayMessage(status) {
-  if (status === 403) {
-    els.previewAuthDescription.textContent = 'Access denied. Try signing in with a different user or ask your administrator for sufficient permissions.';
-    return;
-  }
-  els.previewAuthDescription.textContent = state.siteAuthenticated
-    ? 'Access expired. Please sign in again to continue.'
-    : 'Please sign in to continue.';
-}
-
-function showPreviewAuthOverlay(status) {
-  previewAuthStatus = status;
-  updatePreviewAuthOverlayMessage(status);
-  show(els.previewAuthOverlay);
-}
-
-async function refreshSiteAuthStatus() {
-  if (!state.activeSiteId) {
-    state.siteAuthenticated = false;
-    return;
-  }
-  try {
-    const status = await window.aemDesktop.getSiteAuthStatus(state.activeSiteId);
-    state.siteAuthenticated = status.authenticated;
-  } catch {
-    state.siteAuthenticated = false;
-  }
-}
-
-async function detectPreviewAuthStatus(webview) {
-  if (!webview || webview !== previewWebview) {
-    return null;
-  }
-  try {
-    return await webview.executeJavaScript(`
-      (() => {
-        const pre = document.querySelector('body > pre');
-        if (!pre) return null;
-        const text = pre.textContent.trim();
-        if (text === '401 Unauthorized') return 401;
-        if (text === '403 Forbidden') return 403;
-        return null;
-      })()
-    `, true);
-  } catch {
-    return null;
-  }
-}
-
-async function checkPreviewAuthError(webview) {
-  const status = await detectPreviewAuthStatus(webview);
-  if (status === 401 || status === 403) {
-    await refreshSiteAuthStatus();
-    showPreviewAuthOverlay(status);
-    return;
-  }
-  hidePreviewAuthOverlay();
-}
-
-async function handlePreviewSiteLogin() {
-  if (!state.activeSiteId || !previewAuthStatus) {
-    return;
-  }
-  els.previewAuthLogin.disabled = true;
-  try {
-    await window.aemDesktop.loginSite(state.activeSiteId);
-  } catch (err) {
-    els.previewAuthDescription.textContent = err.message || 'Sign-in failed';
-  } finally {
-    els.previewAuthLogin.disabled = false;
-  }
-}
+// Last successfully-requested preview, so we can reload it after an in-app
+// sign-in, plus a guard so a 401 burst only prompts once.
+let lastPreview = null;
+let previewAuthPrompted = false;
 
 function destroyPreviewWebview() {
   if (previewWebview) {
@@ -432,7 +351,6 @@ function destroyPreviewWebview() {
     previewOrigin = null;
     previewDevToolsAutoOpened = false;
   }
-  hidePreviewAuthOverlay();
 }
 
 function renderContentPlaceholder(message) {
@@ -554,7 +472,6 @@ function ensurePreviewWebview(origin) {
         console.info(`[preview] loaded ${webview.getURL()}`);
       }
     });
-    checkPreviewAuthError(webview);
   });
 
   return webview;
@@ -562,9 +479,64 @@ function ensurePreviewWebview(origin) {
 
 function showPreview({ url, previewOrigin: origin }) {
   els.contentBody.classList.add('is-preview');
+  lastPreview = { url, previewOrigin: origin };
+  previewAuthPrompted = false;
 
   const webview = ensurePreviewWebview(origin);
   webview.src = url;
+}
+
+function renderPreviewSignIn() {
+  els.contentBody.classList.remove('is-preview');
+  destroyPreviewWebview();
+  els.contentBody.replaceChildren();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'placeholder preview-signin';
+
+  const message = document.createElement('p');
+  message.textContent = 'This site requires sign-in to preview protected content.';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn primary';
+  button.textContent = 'Sign in to preview';
+  button.addEventListener('click', () => doPreviewLogin(button));
+
+  wrap.append(message, button);
+  els.contentBody.append(wrap);
+}
+
+async function doPreviewLogin(button) {
+  if (!state.activeSiteId) {
+    return;
+  }
+  const btn = button;
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const result = await window.aemDesktop.loginPreview(state.activeSiteId);
+    if (result?.ok && lastPreview) {
+      showPreview(lastPreview);
+      return;
+    }
+    btn.textContent = result?.error ? 'Sign-in failed — try again' : 'Sign in to preview';
+  } catch {
+    btn.textContent = 'Sign-in failed — try again';
+  }
+  btn.disabled = false;
+}
+
+function handlePreviewAuthRequired({ previewUrl } = {}) {
+  if (previewAuthPrompted) {
+    return;
+  }
+  const site = activeSite();
+  if (!site || (previewUrl && site.previewUrl !== previewUrl)) {
+    return;
+  }
+  previewAuthPrompted = true;
+  renderPreviewSignIn();
 }
 
 function findItemInCache(daPath) {
@@ -2286,7 +2258,6 @@ function wireUi() {
   els.addSiteForm.addEventListener('submit', handleAddSite);
   els.signInBtn.addEventListener('click', handleSignIn);
   els.signOutBtn.addEventListener('click', handleSignOut);
-  els.previewAuthLogin.addEventListener('click', handlePreviewSiteLogin);
 
   window.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
@@ -2459,17 +2430,7 @@ async function init() {
   await loadSyncFolderPreference();
   await refreshAuthStatus();
   await loadSites();
-  window.aemDesktop.onSiteAuthUpdated(async ({ org, repo }) => {
-    const site = activeSite();
-    if (!site || site.org !== org || site.repo !== repo) {
-      return;
-    }
-    state.siteAuthenticated = true;
-    if (previewAuthStatus && previewWebview) {
-      hidePreviewAuthOverlay();
-      previewWebview.reloadIgnoringCache();
-    }
-  });
+  window.aemDesktop.onPreviewAuthRequired(handlePreviewAuthRequired);
   showView('home');
 }
 

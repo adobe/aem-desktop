@@ -22,15 +22,6 @@ import {
 } from './preview-local.js';
 import { createHeadHtmlCache } from './head-html.js';
 import { createMetadataJsonCache } from './metadata-json.js';
-import {
-  buildAuthErrorHtml,
-  buildSiteLoginAckUrl,
-  buildSiteLoginUrl,
-  createSiteLoginSession,
-  LOGIN_ACK_ROUTE,
-  LOGIN_ROUTE,
-  siteAuthRequestHeaders,
-} from './site-auth.js';
 
 const noop = () => {};
 
@@ -92,34 +83,17 @@ function sendText(res, status, message) {
 }
 
 /**
- * @param {import('node:http').IncomingMessage} req
- * @returns {Promise<unknown>}
- */
-async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-  if (chunks.length === 0) {
-    return {};
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    return {};
-  }
-}
-
-/**
  * @param {string|null|undefined} siteToken
  * @returns {typeof fetch}
  */
 function createAuthenticatedFetch(siteToken, fetchFn = fetch) {
-  const authHeaders = siteAuthRequestHeaders(siteToken);
+  if (!siteToken) {
+    return fetchFn;
+  }
   return (url, init = {}) => {
     const headers = {
       ...(init.headers || {}),
-      ...authHeaders,
+      authorization: `token ${siteToken}`,
     };
     return fetchFn(url, { ...init, headers });
   };
@@ -131,13 +105,13 @@ function createAuthenticatedFetch(siteToken, fetchFn = fetch) {
  * @param {string} upstreamUrl
  * @param {string} proxyHost
  * @param {string|null|undefined} siteToken
+ * @param {typeof fetch} fetchFn
  */
 async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn) {
   /** @type {Record<string, string>} */
   const reqHeaders = {
     'x-forwarded-host': proxyHost,
     'x-forwarded-scheme': 'http',
-    ...siteAuthRequestHeaders(siteToken),
   };
   const names = Object.keys(req.headers);
   for (let i = 0; i < names.length; i += 1) {
@@ -145,6 +119,10 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
     if (!SKIP_REQUEST_HEADERS.has(name.toLowerCase())) {
       reqHeaders[name] = /** @type {string} */ (req.headers[name]);
     }
+  }
+
+  if (siteToken) {
+    reqHeaders.authorization = `token ${siteToken}`;
   }
 
   const upstream = await fetchFn(upstreamUrl, {
@@ -163,25 +141,6 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
     }
   });
 
-  if (upstream.status === 401 || upstream.status === 403) {
-    const contentType = upstream.headers.get('content-type') || 'text/plain';
-    if (contentType.startsWith('text/html')) {
-      const textBody = await upstream.text();
-      respHeaders['content-type'] = contentType;
-      sendResponse(res, upstream.status, respHeaders, req.method === 'HEAD' ? '' : textBody);
-      return;
-    }
-
-    respHeaders['content-type'] = 'text/html; charset=utf-8';
-    sendResponse(
-      res,
-      upstream.status,
-      respHeaders,
-      req.method === 'HEAD' ? '' : buildAuthErrorHtml(upstream.status, upstreamUrl),
-    );
-    return;
-  }
-
   res.writeHead(upstream.status, respHeaders);
 
   if (req.method === 'HEAD') {
@@ -198,6 +157,15 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
 }
 
 /**
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {boolean}
+ */
+function isMainFrameDocumentRequest(req) {
+  const dest = req.headers['sec-fetch-dest'];
+  return dest !== 'image' && dest !== 'style' && dest !== 'script';
+}
+
+/**
  * @param {{
  *   getActiveSite: () => Promise<{
  *     org: string,
@@ -207,26 +175,36 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
  *     apiBackend?: string,
  *   }|null>,
  *   getSyncFolder: () => Promise<string|null>,
- *   getSiteToken?: () => Promise<string|null>,
- *   onSiteToken?: (siteToken: string) => Promise<void>|void,
- *   loginSession?: ReturnType<import('./site-auth.js').createSiteLoginSession>,
+ *   getToken?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => Promise<string|null>,
+ *   onAuthRequired?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => void,
  *   fetchFn?: typeof fetch,
  *   log?: import('electron-log').MainLogger,
+ *   headHtmlCache?: ReturnType<typeof createHeadHtmlCache>,
+ *   metadataJsonCache?: ReturnType<typeof createMetadataJsonCache>,
  * }} deps
  * @returns {Promise<{
  *   baseUrl: string,
  *   close: () => Promise<void>,
  *   headHtmlCache: ReturnType<typeof createHeadHtmlCache>,
  *   metadataJsonCache: ReturnType<typeof createMetadataJsonCache>,
- *   loginSession: ReturnType<import('./site-auth.js').createSiteLoginSession>,
  * }>}
  */
 export async function startPreviewServer(deps) {
   const scope = previewLogger(deps.log);
   const headHtmlCache = deps.headHtmlCache || createHeadHtmlCache();
   const metadataJsonCache = deps.metadataJsonCache || createMetadataJsonCache();
-  const loginSession = deps.loginSession || createSiteLoginSession();
-  const getSiteToken = deps.getSiteToken || (async () => null);
   const fetchFn = deps.fetchFn || fetch;
 
   const server = createServer(async (req, res) => {
@@ -235,59 +213,13 @@ export async function startPreviewServer(deps) {
       return;
     }
 
-    const requestUrl = new URL(req.url, 'http://127.0.0.1');
-    const { pathname } = requestUrl;
-
-    if (pathname === LOGIN_ROUTE && req.method === 'GET') {
-      const site = await deps.getActiveSite();
-      if (!site) {
-        sendText(res, 503, 'No active site for preview');
-        return;
-      }
-
-      const baseUrl = `http://${requestUrl.host}`;
-      const loginUrl = buildSiteLoginUrl({
-        org: site.org,
-        repo: site.repo,
-        branch: site.branch,
-        apiBackend: site.apiBackend,
-        ackUrl: buildSiteLoginAckUrl(baseUrl),
-      });
-      const redirectUrl = loginSession.buildLoginRedirectUrl(loginUrl);
-      scope.info(`Redirecting to site login for ${site.org}/${site.repo}`);
-      sendResponse(res, 302, { location: redirectUrl });
-      return;
-    }
-
-    if (pathname === LOGIN_ACK_ROUTE) {
-      const body = req.method === 'POST' ? await readJsonBody(req) : {};
-      const ack = await loginSession.handleAck({
-        method: req.method || 'GET',
-        origin: req.headers.origin,
-        body,
-      });
-
-      if (ack.siteToken && deps.onSiteToken) {
-        try {
-          await deps.onSiteToken(ack.siteToken);
-          scope.info('Site token received from Admin login');
-        } catch (err) {
-          scope.error(`Failed to persist site token: ${err.message}`);
-          sendText(res, 500, 'Failed to save site token');
-          return;
-        }
-      }
-
-      sendResponse(res, ack.status, ack.headers, ack.body);
-      return;
-    }
-
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       sendText(res, 405, 'Method not allowed');
       return;
     }
 
-    const previewPath = pathnameToPreviewPath(pathname);
+    const requestUrl = new URL(req.url, 'http://127.0.0.1');
+    const previewPath = pathnameToPreviewPath(requestUrl.pathname);
 
     const site = await deps.getActiveSite();
     if (!site) {
@@ -302,8 +234,8 @@ export async function startPreviewServer(deps) {
       requestUrl.search,
     );
 
-    const siteToken = await getSiteToken();
-    const authFetch = createAuthenticatedFetch(siteToken, fetchFn);
+    const token = deps.getToken ? await deps.getToken(site) : null;
+    const authFetch = createAuthenticatedFetch(token, fetchFn);
 
     const syncFolder = await deps.getSyncFolder();
     if (syncFolder) {
@@ -343,8 +275,11 @@ export async function startPreviewServer(deps) {
 
     const proxyHost = req.headers.host || requestUrl.host;
     try {
-      await proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn);
+      await proxyUpstream(req, res, upstreamUrl, proxyHost, token, fetchFn);
       scope.info(`proxy ${pathWithQuery} -> ${upstreamUrl} (${res.statusCode})`);
+      if (res.statusCode === 401 && isMainFrameDocumentRequest(req)) {
+        deps.onAuthRequired?.(site);
+      }
     } catch (err) {
       scope.error(`proxy failed for ${upstreamUrl}: ${err.message}`);
       if (!res.headersSent) {
@@ -370,7 +305,6 @@ export async function startPreviewServer(deps) {
     baseUrl,
     headHtmlCache,
     metadataJsonCache,
-    loginSession,
     close: () => new Promise((resolve, reject) => {
       server.close((err) => {
         if (err) {

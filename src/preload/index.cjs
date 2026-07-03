@@ -29,13 +29,6 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   getDaAuthStatus: () => ipcRenderer.invoke('da:auth-status'),
   loginDa: () => ipcRenderer.invoke('da:login'),
   logoutDa: () => ipcRenderer.invoke('da:logout'),
-  getSiteAuthStatus: (siteId) => ipcRenderer.invoke('site:auth-status', { siteId }),
-  loginSite: (siteId) => ipcRenderer.invoke('site:login', { siteId }),
-  onSiteAuthUpdated: (callback) => {
-    const handler = (_event, data) => callback(data);
-    ipcRenderer.on('site:auth-updated', handler);
-    return () => ipcRenderer.removeListener('site:auth-updated', handler);
-  },
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
@@ -44,6 +37,12 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     { siteId, daPaths },
   ),
   setActivePreviewSite: (siteId) => ipcRenderer.invoke('preview:set-active-site', { siteId }),
+  loginPreview: (siteId) => ipcRenderer.invoke('preview:login', { siteId }),
+  onPreviewAuthRequired: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('preview:auth-required', handler);
+    return () => ipcRenderer.removeListener('preview:auth-required', handler);
+  },
 
   pickSyncFolder: () => ipcRenderer.invoke('sync:pick-folder'),
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),

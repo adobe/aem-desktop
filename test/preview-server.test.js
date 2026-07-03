@@ -96,15 +96,20 @@ test('preview server returns 503 when no active site', async () => {
   }
 });
 
-test('preview server wraps upstream 401 as html pre for auth overlay', async () => {
+test('preview server notifies onAuthRequired for upstream 401', async () => {
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  let authRequired = 0;
   const server = await startPreviewServer({
-    getActiveSite: async () => ({
-      org: 'org',
-      repo: 'id',
-      previewUrl: 'https://main--id--org.aem.page',
-    }),
+    getActiveSite: async () => site,
     getSyncFolder: async () => null,
-    getSiteToken: async () => null,
+    getToken: async () => null,
+    onAuthRequired: () => {
+      authRequired += 1;
+    },
     fetchFn: async () => new Response('401 Unauthorized', {
       status: 401,
       headers: { 'content-type': 'text/plain' },
@@ -114,9 +119,7 @@ test('preview server wraps upstream 401 as html pre for auth overlay', async () 
   try {
     const resp = await fetch(`${server.baseUrl}/protected`);
     assert.equal(resp.status, 401);
-    assert.match(resp.headers.get('content-type'), /text\/html/);
-    const body = await resp.text();
-    assert.match(body, /<pre[^>]*>401 Unauthorized<\/pre>/);
+    assert.equal(authRequired, 1);
   } finally {
     await server.close();
   }
@@ -124,14 +127,15 @@ test('preview server wraps upstream 401 as html pre for auth overlay', async () 
 
 test('preview server sends Authorization token header upstream', async () => {
   let authHeader;
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
   const server = await startPreviewServer({
-    getActiveSite: async () => ({
-      org: 'org',
-      repo: 'id',
-      previewUrl: 'https://main--id--org.aem.page',
-    }),
+    getActiveSite: async () => site,
     getSyncFolder: async () => null,
-    getSiteToken: async () => 'hlxtst_secret',
+    getToken: async () => 'hlxtst_secret',
     fetchFn: async (_url, init) => {
       authHeader = init?.headers?.authorization;
       return new Response('ok', { status: 200 });

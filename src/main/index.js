@@ -27,12 +27,17 @@ import {
   DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
 } from './da-auth.js';
 import {
-  getSiteAuthStatus,
-  getStoredSiteToken,
-  LOGIN_ROUTE,
-  saveSiteToken,
-  SITE_TOKENS_FILENAME,
-} from './site-auth.js';
+  isSiteTokenExpired,
+  loadSiteTokens,
+  saveSiteTokens,
+  siteTokenKey,
+  SITE_TOKEN_FILENAME,
+} from './site-token-store.js';
+import {
+  adminBaseForApiBackend,
+  parsePreviewRef,
+} from './preview-login-url.js';
+import { openPreviewLogin } from './preview-login.js';
 import {
   addSiteFromUrl, findSite, loadSites, removeSite, saveSites,
 } from './site-store.js';
@@ -79,7 +84,7 @@ function tokenPath() {
 }
 
 function siteTokensPath() {
-  return userDataPath(SITE_TOKENS_FILENAME);
+  return userDataPath(SITE_TOKEN_FILENAME);
 }
 
 function sitesPath() {
@@ -155,6 +160,61 @@ async function setActivePreviewSite(siteId) {
     previewUrl: site.previewUrl,
     apiBackend: site.apiBackend,
   });
+}
+
+/** @type {Record<string, { token: string, expiresAt: number|null }>|null} */
+let siteTokensCache = null;
+
+async function ensureSiteTokensLoaded() {
+  if (!siteTokensCache) {
+    siteTokensCache = await loadSiteTokens(siteTokensPath());
+  }
+  return siteTokensCache;
+}
+
+/**
+ * Returns a valid EDS site token for the given preview site, or null.
+ *
+ * @param {{ previewUrl: string }} site
+ * @returns {Promise<string|null>}
+ */
+async function getSiteTokenFor(site) {
+  const tokens = await ensureSiteTokensLoaded();
+  const entry = tokens[siteTokenKey(site.previewUrl)];
+  return isSiteTokenExpired(entry) ? null : entry.token;
+}
+
+/**
+ * Opens the in-app preview sign-in for a site, captures the minted site token,
+ * and persists it.
+ *
+ * @param {{
+ *   org: string,
+ *   repo: string,
+ *   previewUrl: string,
+ *   apiBackend?: string,
+ * }} site
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function loginPreviewSite(site) {
+  try {
+    const entry = await openPreviewLogin({
+      org: site.org,
+      site: site.repo,
+      ref: parsePreviewRef(site.previewUrl),
+      adminBase: adminBaseForApiBackend(site.apiBackend),
+      parent: mainWindow,
+      log,
+    });
+    const tokens = await ensureSiteTokensLoaded();
+    tokens[siteTokenKey(site.previewUrl)] = entry;
+    await saveSiteTokens(siteTokensPath(), tokens);
+    previewRegistry?.clearHeadCache(siteTokenKey(site.previewUrl));
+    return { ok: true };
+  } catch (err) {
+    log.scope('preview-login').warn(err.message);
+    return { ok: false, error: err.message };
+  }
 }
 
 async function withContentClient(site, fn) {
@@ -292,31 +352,18 @@ ipcMain.handle('da:login', async () => {
 
 ipcMain.handle('da:logout', async () => logout(tokenPath()));
 
-ipcMain.handle('site:auth-status', async (_event, { siteId }) => {
+ipcMain.handle('preview:login', async (_event, { siteId }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
   if (!site) {
     throw new Error('Site not found');
   }
-  return getSiteAuthStatus(siteTokensPath(), site.org, site.repo);
-});
-
-ipcMain.handle('site:login', async (_event, { siteId }) => {
-  const sites = await ensureSitesLoaded();
-  const site = findSite(sites, siteId);
-  if (!site) {
-    throw new Error('Site not found');
-  }
-
-  await setActivePreviewSite(siteId);
-  const proxyBase = previewRegistry?.getBaseUrl();
-  if (!proxyBase) {
-    throw new Error('Preview proxy is not ready');
-  }
-
-  const loginUrl = `${proxyBase.replace(/\/+$/, '')}${LOGIN_ROUTE}`;
-  await shell.openExternal(loginUrl);
-  return { loginUrl };
+  return loginPreviewSite({
+    org: site.org,
+    repo: site.repo,
+    previewUrl: site.previewUrl,
+    apiBackend: site.apiBackend,
+  });
 });
 
 ipcMain.handle('da:list', async (_event, { siteId, daPath = '/' }) => {
@@ -810,16 +857,12 @@ app.whenReady().then(async () => {
     createMetadataJsonCache,
     getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
     resolveActiveSite: resolvePreviewSite,
-    getSiteToken: (org, repo) => getStoredSiteToken(siteTokensPath(), org, repo),
-    saveSiteToken: (org, repo, siteToken) => saveSiteToken(
-      siteTokensPath(),
-      org,
-      repo,
-      siteToken,
-    ),
-    onSiteTokenSaved: ({ org, repo }) => {
+    getToken: getSiteTokenFor,
+    onAuthRequired: (site) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('site:auth-updated', { org, repo });
+        mainWindow.webContents.send('preview:auth-required', {
+          previewUrl: site.previewUrl,
+        });
       }
     },
     log,
