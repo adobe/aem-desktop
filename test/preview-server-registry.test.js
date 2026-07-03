@@ -43,6 +43,7 @@ test('preview server registry assigns ports per upstream origin', async () => {
       resolveSheetRow: async () => null,
     }),
     getSyncFolder: async () => null,
+    getToken: async () => null,
     resolveActiveSite: async (siteId) => ({
       org: 'org',
       repo: siteId,
@@ -85,6 +86,7 @@ test('preview server registry clears active base URL when deactivated', async ()
       resolveSheetRow: async () => null,
     }),
     getSyncFolder: async () => null,
+    getToken: async () => null,
     resolveActiveSite: async () => null,
   });
 
@@ -98,4 +100,34 @@ test('preview server registry clears active base URL when deactivated', async ()
   await registry.activateSite(null, null);
   assert.equal(registry.getBaseUrl(), null);
   assert.equal(registry.getActiveUpstreamOrigin(), null);
+});
+
+test('preview server registry clearHeadCache clears cached head for one origin', async () => {
+  let cleared = 0;
+  const registry = createPreviewServerRegistry({
+    startPreviewServer: async () => ({
+      baseUrl: 'http://127.0.0.1:6002',
+      close: async () => {},
+    }),
+    createHeadHtmlCache: () => ({
+      clear: () => { cleared += 1; },
+      resolve: async () => '',
+    }),
+    createMetadataJsonCache: () => ({
+      clear: () => { cleared += 1; },
+      resolveSheetRow: async () => null,
+    }),
+    getSyncFolder: async () => null,
+    getToken: async () => null,
+    resolveActiveSite: async () => null,
+  });
+
+  await registry.activateSite('a', {
+    org: 'org',
+    repo: 'a',
+    previewUrl: 'https://main--a--org.aem.page',
+  });
+  cleared = 0;
+  registry.clearHeadCache('https://main--a--org.aem.page');
+  assert.equal(cleared, 2);
 });

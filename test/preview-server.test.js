@@ -95,3 +95,181 @@ test('preview server returns 503 when no active site', async () => {
     await server.close();
   }
 });
+
+test('preview server notifies onAuthRequired for upstream 401', async () => {
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  let authRequired = 0;
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    getToken: async () => null,
+    onAuthRequired: () => {
+      authRequired += 1;
+    },
+    fetchFn: async () => new Response('401 Unauthorized', {
+      status: 401,
+      headers: { 'content-type': 'text/plain' },
+    }),
+  });
+
+  try {
+    const resp = await fetch(`${server.baseUrl}/protected`);
+    assert.equal(resp.status, 401);
+    assert.equal(authRequired, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview server notifies onAuthRequired for upstream 403 without token', async () => {
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  let authRequired = 0;
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    getToken: async () => null,
+    onAuthRequired: () => {
+      authRequired += 1;
+    },
+    fetchFn: async () => new Response('403 Forbidden', {
+      status: 403,
+      headers: { 'content-type': 'text/plain' },
+    }),
+  });
+
+  try {
+    const resp = await fetch(`${server.baseUrl}/protected`);
+    assert.equal(resp.status, 403);
+    assert.equal(authRequired, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview server strips localhost Origin before upstream fetch', async () => {
+  let forwardedOrigin;
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    getToken: async () => null,
+    fetchFn: async (_url, init) => {
+      forwardedOrigin = init?.headers?.origin;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  try {
+    await fetch(`${server.baseUrl}/page`, {
+      headers: { Origin: 'http://127.0.0.1:9999' },
+    });
+    assert.equal(forwardedOrigin, undefined);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview server proxies to the site previewUrl origin (aem.page not aem.live)', async () => {
+  let upstreamUrl;
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    fetchFn: async (url) => {
+      upstreamUrl = url;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  try {
+    await fetch(`${server.baseUrl}/hello`);
+    assert.equal(upstreamUrl, 'https://main--id--org.aem.page/hello');
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview server falls through to proxy when local file exists but upstream requires auth', async () => {
+  const syncFolder = await mkdtemp(join(tmpdir(), 'aem-sync-auth-'));
+  const org = 'org';
+  const repo = 'id';
+  const contentRoot = join(syncFolder, org, repo);
+  await mkdir(contentRoot, { recursive: true });
+  await writeFile(join(contentRoot, 'protected.html'), '<h1>Local only</h1>');
+
+  let authRequired = 0;
+  let proxyCalled = false;
+  const site = {
+    org,
+    repo,
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => syncFolder,
+    getToken: async () => null,
+    onAuthRequired: () => {
+      authRequired += 1;
+    },
+    fetchFn: async (url, init) => {
+      if (init?.method === 'HEAD') {
+        return new Response(null, { status: 401 });
+      }
+      proxyCalled = true;
+      return new Response('401 Unauthorized', { status: 401 });
+    },
+  });
+
+  try {
+    const resp = await fetch(`${server.baseUrl}/protected`);
+    assert.equal(resp.status, 401);
+    assert.equal(proxyCalled, true);
+    assert.equal(authRequired, 1);
+    const body = await resp.text();
+    assert.doesNotMatch(body, /Local only/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview server sends Authorization token header upstream', async () => {
+  let authHeader;
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    getToken: async () => 'hlxtst_secret',
+    fetchFn: async (_url, init) => {
+      authHeader = init?.headers?.authorization;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  try {
+    const resp = await fetch(`${server.baseUrl}/page`);
+    assert.equal(resp.status, 200);
+    assert.equal(authHeader, 'token hlxtst_secret');
+  } finally {
+    await server.close();
+  }
+});

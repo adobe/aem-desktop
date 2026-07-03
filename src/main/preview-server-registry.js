@@ -27,10 +27,26 @@ export function previewUrlOrigin(previewUrl) {
  *   createHeadHtmlCache: typeof import('./head-html.js').createHeadHtmlCache,
  *   createMetadataJsonCache: typeof import('./metadata-json.js').createMetadataJsonCache,
  *   getSyncFolder: () => Promise<string|null>,
+ *   getToken?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => Promise<string|null>,
+ *   onAuthRequired?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => void,
  *   resolveActiveSite: (siteId: string) => Promise<{
  *     org: string,
  *     repo: string,
+ *     branch?: string,
  *     previewUrl: string,
+ *     apiBackend?: string,
  *   }|null>,
  *   log?: import('electron-log').MainLogger,
  * }} deps
@@ -78,6 +94,8 @@ export function createPreviewServerRegistry(deps) {
         return site;
       },
       getSyncFolder: deps.getSyncFolder,
+      getToken: deps.getToken,
+      onAuthRequired: deps.onAuthRequired,
     });
 
     const entry = {
@@ -96,7 +114,13 @@ export function createPreviewServerRegistry(deps) {
   return {
     /**
      * @param {string|null} siteId
-     * @param {{ org: string, repo: string, previewUrl: string }|null} site
+     * @param {{
+     *   org: string,
+     *   repo: string,
+     *   branch?: string,
+     *   previewUrl: string,
+     *   apiBackend?: string,
+     * }|null} site
      * @returns {Promise<string|null>} active proxy base URL
      */
     async activateSite(siteId, site) {
@@ -136,6 +160,24 @@ export function createPreviewServerRegistry(deps) {
     /** @returns {string|null} */
     getActiveUpstreamOrigin() {
       return activeUpstreamOrigin;
+    },
+
+    /**
+     * Drops cached head.html. Call after a sign-in so a head that was fetched
+     * empty (401) while unauthenticated is re-fetched with the new site token.
+     *
+     * @param {string} [upstreamOrigin] limit to one origin; omit to clear all
+     */
+    clearHeadCache(upstreamOrigin) {
+      if (upstreamOrigin) {
+        serversByOrigin.get(upstreamOrigin)?.headHtmlCache.clear();
+        serversByOrigin.get(upstreamOrigin)?.metadataJsonCache.clear();
+        return;
+      }
+      for (const entry of serversByOrigin.values()) {
+        entry.headHtmlCache.clear();
+        entry.metadataJsonCache.clear();
+      }
     },
 
     async closeAll() {

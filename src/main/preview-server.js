@@ -45,6 +45,10 @@ const SKIP_REQUEST_HEADERS = new Set([
   'host',
   'proxy-connection',
   'if-modified-since',
+  // The webview sends a localhost Origin on CORS requests (e.g. module scripts).
+  // EDS rejects that foreign origin with a 403, so strip it — the proxy stands in
+  // for the .aem.page origin and presents requests as same-origin.
+  'origin',
 ]);
 
 const SKIP_RESPONSE_HEADERS = new Set([
@@ -65,11 +69,38 @@ const SKIP_RESPONSE_HEADERS = new Set([
 /**
  * @param {import('node:http').ServerResponse} res
  * @param {number} status
+ * @param {Record<string, string|string[]>} headers
+ * @param {string} [body]
+ */
+function sendResponse(res, status, headers, body = '') {
+  res.writeHead(status, headers);
+  res.end(body);
+}
+
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
  * @param {string} message
  */
 function sendText(res, status, message) {
-  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
-  res.end(message);
+  sendResponse(res, status, { 'content-type': 'text/plain; charset=utf-8' }, message);
+}
+
+/**
+ * @param {string|null|undefined} siteToken
+ * @returns {typeof fetch}
+ */
+function createAuthenticatedFetch(siteToken, fetchFn = fetch) {
+  if (!siteToken) {
+    return fetchFn;
+  }
+  return (url, init = {}) => {
+    const headers = {
+      ...(init.headers || {}),
+      authorization: `token ${siteToken}`,
+    };
+    return fetchFn(url, { ...init, headers });
+  };
 }
 
 /**
@@ -77,8 +108,10 @@ function sendText(res, status, message) {
  * @param {import('node:http').ServerResponse} res
  * @param {string} upstreamUrl
  * @param {string} proxyHost
+ * @param {string|null|undefined} siteToken
+ * @param {typeof fetch} fetchFn
  */
-async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
+async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn) {
   /** @type {Record<string, string>} */
   const reqHeaders = {
     'x-forwarded-host': proxyHost,
@@ -92,7 +125,11 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
     }
   }
 
-  const upstream = await fetch(upstreamUrl, {
+  if (siteToken) {
+    reqHeaders.authorization = `token ${siteToken}`;
+  }
+
+  const upstream = await fetchFn(upstreamUrl, {
     method: req.method,
     headers: reqHeaders,
     redirect: 'follow',
@@ -124,17 +161,109 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost) {
 }
 
 /**
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {boolean}
+ */
+function isMainFrameDocumentRequest(req) {
+  const dest = req.headers['sec-fetch-dest'];
+  return dest !== 'image' && dest !== 'style' && dest !== 'script';
+}
+
+/**
+ * @param {number} status
+ * @param {string|null|undefined} siteToken
+ * @returns {boolean}
+ */
+function upstreamStatusNeedsAuth(status, siteToken) {
+  if (status === 401) {
+    return true;
+  }
+  // Without a site token, a document 403 on preview usually means access control
+  // rather than a post-login permission denial.
+  return status === 403 && !siteToken;
+}
+
+/**
+ * @param {string} upstreamUrl
+ * @param {string|null|undefined} siteToken
+ * @param {typeof fetch} fetchFn
+ * @returns {Promise<boolean>}
+ */
+async function upstreamRequiresAuth(upstreamUrl, siteToken, fetchFn) {
+  if (siteToken) {
+    return false;
+  }
+  try {
+    const resp = await fetchFn(upstreamUrl, { method: 'HEAD', redirect: 'follow' });
+    return upstreamStatusNeedsAuth(resp.status, siteToken);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * @param {{
- *   getActiveSite: () => Promise<{ org: string, repo: string, previewUrl: string }|null>,
+ *   org: string,
+ *   repo: string,
+ *   branch?: string,
+ *   previewUrl: string,
+ *   apiBackend?: string,
+ * }} site
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} statusCode
+ * @param {string|null|undefined} siteToken
+ * @param {((site: object) => void)|undefined} onAuthRequired
+ */
+function maybeNotifyAuthRequired(site, req, statusCode, siteToken, onAuthRequired) {
+  if (!onAuthRequired || !isMainFrameDocumentRequest(req)) {
+    return;
+  }
+  if (upstreamStatusNeedsAuth(statusCode, siteToken)) {
+    onAuthRequired(site);
+  }
+}
+
+/**
+ * @param {{
+ *   getActiveSite: () => Promise<{
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }|null>,
  *   getSyncFolder: () => Promise<string|null>,
+ *   getToken?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => Promise<string|null>,
+ *   onAuthRequired?: (site: {
+ *     org: string,
+ *     repo: string,
+ *     branch?: string,
+ *     previewUrl: string,
+ *     apiBackend?: string,
+ *   }) => void,
+ *   fetchFn?: typeof fetch,
  *   log?: import('electron-log').MainLogger,
+ *   headHtmlCache?: ReturnType<typeof createHeadHtmlCache>,
+ *   metadataJsonCache?: ReturnType<typeof createMetadataJsonCache>,
  * }} deps
- * @returns {Promise<{ baseUrl: string, close: () => Promise<void> }>}
+ * @returns {Promise<{
+ *   baseUrl: string,
+ *   close: () => Promise<void>,
+ *   headHtmlCache: ReturnType<typeof createHeadHtmlCache>,
+ *   metadataJsonCache: ReturnType<typeof createMetadataJsonCache>,
+ * }>}
  */
 export async function startPreviewServer(deps) {
   const scope = previewLogger(deps.log);
   const headHtmlCache = deps.headHtmlCache || createHeadHtmlCache();
   const metadataJsonCache = deps.metadataJsonCache || createMetadataJsonCache();
+  const fetchFn = deps.fetchFn || fetch;
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
@@ -163,20 +292,28 @@ export async function startPreviewServer(deps) {
       requestUrl.search,
     );
 
+    const token = deps.getToken ? await deps.getToken(site) : null;
+    const authFetch = createAuthenticatedFetch(token, fetchFn);
+
     const syncFolder = await deps.getSyncFolder();
     if (syncFolder) {
       const localRoot = syncRoot(syncFolder, site.org, site.repo);
       const localFile = await resolveLocalContentFile(localRoot, previewPath);
-      if (localFile) {
+      const authBlocked = localFile
+        && isMainFrameDocumentRequest(req)
+        && await upstreamRequiresAuth(upstreamUrl, token, fetchFn);
+      if (localFile && !authBlocked) {
         try {
           const headHtml = await headHtmlCache.resolve({
             previewUrlOrigin: site.previewUrl,
             syncRootDir: localRoot,
+            fetchFn: authFetch,
           });
           const sheetRow = await metadataJsonCache.resolveSheetRow({
             previewUrlOrigin: site.previewUrl,
             syncRootDir: localRoot,
             previewPath,
+            fetchFn: authFetch,
           });
           const { body, contentType } = await readLocalPreviewContent(
             localFile.filePath,
@@ -185,27 +322,25 @@ export async function startPreviewServer(deps) {
             headHtml,
             { sheetRow, previewUrlOrigin: site.previewUrl },
           );
-          res.writeHead(200, {
+          sendResponse(res, 200, {
             'content-type': contentType,
             'access-control-allow-origin': '*',
-          });
-          if (req.method === 'HEAD') {
-            res.end();
-          } else {
-            res.end(body);
-          }
+          }, req.method === 'HEAD' ? '' : body);
           scope.info(`local ${localFile.relativePath} -> 200 ${pathWithQuery}`);
           return;
         } catch (err) {
           scope.warn(`failed to read local file ${localFile.filePath}: ${err.message}`);
         }
+      } else if (authBlocked) {
+        scope.info(`local ${localFile.relativePath} blocked — upstream requires auth`);
       }
     }
 
     const proxyHost = req.headers.host || requestUrl.host;
     try {
-      await proxyUpstream(req, res, upstreamUrl, proxyHost);
+      await proxyUpstream(req, res, upstreamUrl, proxyHost, token, fetchFn);
       scope.info(`proxy ${pathWithQuery} -> ${upstreamUrl} (${res.statusCode})`);
+      maybeNotifyAuthRequired(site, req, res.statusCode, token, deps.onAuthRequired);
     } catch (err) {
       scope.error(`proxy failed for ${upstreamUrl}: ${err.message}`);
       if (!res.headersSent) {

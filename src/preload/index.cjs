@@ -37,6 +37,12 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     { siteId, daPaths },
   ),
   setActivePreviewSite: (siteId) => ipcRenderer.invoke('preview:set-active-site', { siteId }),
+  loginPreview: (siteId) => ipcRenderer.invoke('preview:login', { siteId }),
+  onPreviewAuthRequired: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('preview:auth-required', handler);
+    return () => ipcRenderer.removeListener('preview:auth-required', handler);
+  },
 
   pickSyncFolder: () => ipcRenderer.invoke('sync:pick-folder'),
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),

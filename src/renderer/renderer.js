@@ -339,6 +339,10 @@ let previewWebview = null;
 let previewOrigin = null;
 let previewDevEnabled = null;
 let previewDevToolsAutoOpened = false;
+// Last successfully-requested preview, so we can reload it after an in-app
+// sign-in, plus a guard so a 401 burst only prompts once.
+let lastPreview = null;
+let previewAuthPrompted = false;
 
 function destroyPreviewWebview() {
   if (previewWebview) {
@@ -399,10 +403,6 @@ function wirePreviewWebviewDevTools(webview) {
         `[preview] subresource failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
       );
     }
-  });
-
-  webview.addEventListener('did-finish-load', () => {
-    console.info(`[preview] loaded ${webview.getURL()}`);
   });
 
   webview.addEventListener('console-message', (event) => {
@@ -466,14 +466,105 @@ function ensurePreviewWebview(origin) {
     }
   });
 
+  webview.addEventListener('did-finish-load', () => {
+    previewDevMode().then((dev) => {
+      if (dev) {
+        console.info(`[preview] loaded ${webview.getURL()}`);
+      }
+    });
+    checkPreviewAuthError(webview);
+  });
+
   return webview;
 }
 
 function showPreview({ url, previewOrigin: origin }) {
   els.contentBody.classList.add('is-preview');
+  lastPreview = { url, previewOrigin: origin };
+  previewAuthPrompted = false;
 
   const webview = ensurePreviewWebview(origin);
   webview.src = url;
+}
+
+function renderPreviewSignIn() {
+  els.contentBody.classList.remove('is-preview');
+  destroyPreviewWebview();
+  els.contentBody.replaceChildren();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'placeholder preview-signin';
+
+  const message = document.createElement('p');
+  message.textContent = 'This site requires sign-in to preview protected content.';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn primary';
+  button.textContent = 'Sign in to preview';
+  button.addEventListener('click', () => doPreviewLogin(button));
+
+  wrap.append(message, button);
+  els.contentBody.append(wrap);
+}
+
+async function doPreviewLogin(button) {
+  if (!state.activeSiteId) {
+    return;
+  }
+  const btn = button;
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const result = await window.aemDesktop.loginPreview(state.activeSiteId);
+    if (result?.ok && lastPreview) {
+      showPreview(lastPreview);
+      return;
+    }
+    btn.textContent = result?.error ? 'Sign-in failed — try again' : 'Sign in to preview';
+  } catch {
+    btn.textContent = 'Sign-in failed — try again';
+  }
+  btn.disabled = false;
+}
+
+function handlePreviewAuthRequired({ previewUrl } = {}) {
+  if (previewAuthPrompted) {
+    return;
+  }
+  const site = activeSite();
+  if (!site || (previewUrl && site.previewUrl !== previewUrl)) {
+    return;
+  }
+  previewAuthPrompted = true;
+  renderPreviewSignIn();
+}
+
+async function detectPreviewAuthStatus(webview) {
+  if (!webview || webview !== previewWebview) {
+    return null;
+  }
+  try {
+    return await webview.executeJavaScript(`
+      (() => {
+        const pre = document.querySelector('body > pre');
+        if (!pre) return null;
+        const text = pre.textContent.trim();
+        if (text === '401 Unauthorized') return 401;
+        if (text === '403 Forbidden') return 403;
+        return null;
+      })()
+    `, true);
+  } catch {
+    return null;
+  }
+}
+
+async function checkPreviewAuthError(webview) {
+  const status = await detectPreviewAuthStatus(webview);
+  if (status === 401 || status === 403) {
+    handlePreviewAuthRequired({ previewUrl: activeSite()?.previewUrl });
+  }
 }
 
 function findItemInCache(daPath) {
@@ -2367,6 +2458,7 @@ async function init() {
   await loadSyncFolderPreference();
   await refreshAuthStatus();
   await loadSites();
+  window.aemDesktop.onPreviewAuthRequired(handlePreviewAuthRequired);
   showView('home');
 }
 
