@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/adobe/aem-desktop/compare/v1.3.0...v1.4.0) (2026-07-02)
+
+
+### Features
+
+* support helix6 (api.aem.live) content API backend ([bfe5de4](https://github.com/adobe/aem-desktop/commit/bfe5de42483bff58b9fd02a3696c0882f0520753))
+
 # [1.3.0](https://github.com/adobe/aem-desktop/compare/v1.2.1...v1.3.0) (2026-06-29)
 
 
