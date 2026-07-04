@@ -170,9 +170,7 @@
   background: var(--panel-bg);
 }
 
-.review-diff-body {
-  flex: 1;
-  overflow: auto;
+.review-panes .content-pane:not(.is-preview) {
   padding: 0;
 }
 

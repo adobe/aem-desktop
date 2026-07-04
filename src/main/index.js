@@ -15,7 +15,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
 import { screenshotFilename } from './dev-config.js';
@@ -43,13 +43,15 @@ import {
 } from './site-store.js';
 import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
 import { formatContentForDisplay } from './content-format.js';
+import { parseDocumentHtml } from './document-view-html.js';
+import { diffDocumentHtml } from './document-view-diff.js';
 import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
 import { startPreviewServer } from './preview-server.js';
 import { createPreviewServerRegistry } from './preview-server-registry.js';
 import { createHeadHtmlCache } from './head-html.js';
 import { createMetadataJsonCache } from './metadata-json.js';
 import {
-  runSync, syncRoot, checkSyncStatus,
+  runSync, syncRoot, syncPaths, checkSyncStatus,
   collectFolder, isBinaryExtension,
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
@@ -410,6 +412,60 @@ ipcMain.handle('da:get-source', async (_event, { siteId, daPath }) => {
       ...formatted,
     };
   });
+});
+
+ipcMain.handle('document:parse', async (_event, { html }) => parseDocumentHtml(html));
+
+/**
+ * @param {string} path
+ * @returns {Promise<string|null>}
+ */
+async function readTextFileIfExists(path) {
+  try {
+    return await readFile(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+const DOCUMENT_DIFF_EXTS = new Set(['html', 'htm']);
+
+// Track-changes diff between the synced original (remote snapshot under
+// `.aem/`) and the local working copy. Returns null when there is nothing
+// local to compare, so the renderer can fall back to the plain remote view.
+ipcMain.handle('document:diff', async (_event, { siteId, destFolder, daPath }) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+  if (!destFolder) {
+    return null;
+  }
+  const ext = daPath.split('.').pop().toLowerCase();
+  if (!DOCUMENT_DIFF_EXTS.has(ext)) {
+    return null;
+  }
+
+  const { workingPath, originalPath } = syncPaths(destFolder, site.org, site.repo, daPath);
+  const [working, original] = await Promise.all([
+    readTextFileIfExists(workingPath),
+    readTextFileIfExists(originalPath),
+  ]);
+  if (working === null && original === null) {
+    return null;
+  }
+
+  const diff = diffDocumentHtml(original ?? '', working ?? '');
+  let status = 'modified';
+  if (!diff.changed) {
+    status = 'unchanged';
+  } else if (original === null) {
+    status = 'new';
+  } else if (working === null) {
+    status = 'deleted';
+  }
+  return { status, diff };
 });
 
 let syncAbortController = null;
