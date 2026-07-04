@@ -43,6 +43,13 @@ test('preview server serves transformed local html at root path', async () => {
     }),
     getSyncFolder: async () => syncFolder,
     headHtmlCache: createHeadHtmlCache(),
+    // Keep the test offline: the auth probe HEAD must not hit the real .aem.page origin.
+    fetchFn: async (_url, init) => {
+      if (init?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    },
   });
   const originalResolve = server.headHtmlCache.resolve.bind(server.headHtmlCache);
   server.headHtmlCache.resolve = async (options) => {
