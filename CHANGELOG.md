@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/adobe/aem-desktop/compare/v1.4.0...v1.5.0) (2026-07-04)
+
+
+### Features
+
+* add protected preview site auth like Sidekick and aem-cli ([774e099](https://github.com/adobe/aem-desktop/commit/774e099552e3def315fdf75ed2a7261bc1bc17b2))
+
 # [1.4.0](https://github.com/adobe/aem-desktop/compare/v1.3.0...v1.4.0) (2026-07-02)
 
 
