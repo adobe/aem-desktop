@@ -361,6 +361,7 @@ ipcMain.handle('da:login', async () => {
 ipcMain.handle('da:logout', async () => {
   await logout(tokenPath());
   contentDaLiveAuth?.clearCache();
+  return getAuthStatus(tokenPath());
 });
 
 ipcMain.handle('preview:login', async (_event, { siteId }) => {
