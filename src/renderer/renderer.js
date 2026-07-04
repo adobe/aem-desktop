@@ -577,6 +577,7 @@ function createPreviewController(pane) {
     const wv = document.createElement('webview');
     wv.className = 'preview-webview';
     wv.setAttribute('allowpopups', 'false');
+    wv.setAttribute('partition', window.aemDesktop.previewWebviewPartition);
 
     wv.addEventListener('will-navigate', (event) => {
       if (!isAllowedPreviewNavigation(event.url)) {

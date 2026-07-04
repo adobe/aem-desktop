@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
-  app, BrowserWindow, dialog, ipcMain, shell,
+  app, BrowserWindow, dialog, ipcMain, session, shell,
 } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -45,6 +45,9 @@ import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
 import { formatContentForDisplay } from './content-format.js';
 import { parseDocumentHtml } from './document-view-html.js';
 import { diffDocumentHtml } from './document-view-diff.js';
+import {
+  initContentDaLiveAuth,
+} from './content-da-live-auth.js';
 import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
 import { startPreviewServer } from './preview-server.js';
 import { createPreviewServerRegistry } from './preview-server-registry.js';
@@ -76,6 +79,8 @@ let mainWindow;
 let sitesCache = [];
 /** @type {ReturnType<typeof createPreviewServerRegistry>|null} */
 let previewRegistry = null;
+/** @type {{ clearCache: () => void }|null} */
+let contentDaLiveAuth = null;
 
 function userDataPath(name) {
   return join(app.getPath('userData'), name);
@@ -349,10 +354,14 @@ ipcMain.handle('da:login', async () => {
     tokenPath: tokenPath(),
     openBrowser: (url) => shell.openExternal(url),
   });
+  contentDaLiveAuth?.clearCache();
   return getAuthStatus(tokenPath());
 });
 
-ipcMain.handle('da:logout', async () => logout(tokenPath()));
+ipcMain.handle('da:logout', async () => {
+  await logout(tokenPath());
+  contentDaLiveAuth?.clearCache();
+});
 
 ipcMain.handle('preview:login', async (_event, { siteId }) => {
   const sites = await ensureSitesLoaded();
@@ -907,6 +916,8 @@ ipcMain.handle('dev:capture-screenshot', async (event) => {
 });
 
 app.whenReady().then(async () => {
+  contentDaLiveAuth = initContentDaLiveAuth(tokenPath(), session);
+
   previewRegistry = createPreviewServerRegistry({
     startPreviewServer,
     createHeadHtmlCache,

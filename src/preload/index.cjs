@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     { siteId, destFolder, daPath },
   ),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
+  previewWebviewPartition: 'persist:aem-preview',
   buildAemPreviewUrls: (siteId, daPaths) => ipcRenderer.invoke(
     'preview:build-aem-urls',
     { siteId, daPaths },
