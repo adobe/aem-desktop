@@ -30,6 +30,7 @@ import {
   renderReviewFileList, renderDiffView, wireReviewKeyboard,
   togglePathsCheckState,
 } from './review-view.js';
+import { renderDocumentView, renderDocumentDiffView } from './document-view.js';
 
 const state = {
   view: 'home',
@@ -71,7 +72,14 @@ const els = {
   authStatus: document.getElementById('auth-status'),
   signInBtn: document.getElementById('sign-in-btn'),
   signOutBtn: document.getElementById('sign-out-btn'),
-  contentBody: document.getElementById('content-body'),
+  contentToolbar: document.getElementById('content-toolbar'),
+  contentSegment: document.getElementById('content-segment'),
+  contentSegmentPreview: document.getElementById('content-segment-preview'),
+  contentSegmentCode: document.getElementById('content-segment-code'),
+  contentSegmentDocument: document.getElementById('content-segment-document'),
+  contentPreviewPane: document.getElementById('content-preview-pane'),
+  contentCodePane: document.getElementById('content-code-pane'),
+  contentDocumentPane: document.getElementById('content-document-pane'),
   syncModal: document.getElementById('sync-modal'),
   syncPickFolder: document.getElementById('sync-pick-folder'),
   syncFolderPath: document.getElementById('sync-folder-path'),
@@ -115,7 +123,14 @@ const els = {
   pullProgressText: document.getElementById('pull-progress-text'),
   reviewView: document.getElementById('review-view'),
   reviewFileContainer: document.getElementById('review-file-container'),
-  reviewDiffBody: document.getElementById('review-diff-body'),
+  reviewContentToolbar: document.getElementById('review-content-toolbar'),
+  reviewSegment: document.getElementById('review-segment'),
+  reviewSegmentPreview: document.getElementById('review-segment-preview'),
+  reviewSegmentCode: document.getElementById('review-segment-code'),
+  reviewSegmentDocument: document.getElementById('review-segment-document'),
+  reviewPreviewPane: document.getElementById('review-preview-pane'),
+  reviewCodePane: document.getElementById('review-code-pane'),
+  reviewDocumentPane: document.getElementById('review-document-pane'),
   reviewCancel: document.getElementById('review-cancel'),
   reviewRevert: document.getElementById('review-revert'),
   reviewPush: document.getElementById('review-push'),
@@ -201,7 +216,7 @@ async function enterBrowse(siteId) {
   state.activeSiteId = siteId;
   await window.aemDesktop.setActivePreviewSite(siteId);
   resetTree();
-  renderContentPlaceholder('Select a file from the folder list.');
+  resetBrowseContentView();
   showView('browse');
   renderSites();
   await refreshTree();
@@ -335,45 +350,60 @@ function renderAuthStatus() {
   renderSites();
 }
 
-let previewWebview = null;
-let previewOrigin = null;
-let previewDevEnabled = null;
-let previewDevToolsAutoOpened = false;
-// Last successfully-requested preview, so we can reload it after an in-app
-// sign-in, plus a guard so a 401 burst only prompts once.
-let lastPreview = null;
-let previewAuthPrompted = false;
+/** @typedef {'preview' | 'code' | 'document'} ContentMode */
 
-function destroyPreviewWebview() {
-  if (previewWebview) {
-    previewWebview.remove();
-    previewWebview = null;
-    previewOrigin = null;
-    previewDevToolsAutoOpened = false;
-  }
-}
+const CONTENT_MODES = ['document', 'preview', 'code'];
+const CONTENT_MODE_STORAGE_KEY = 'contentViewMode';
 
-function renderContentPlaceholder(message) {
-  els.contentBody.classList.remove('is-preview');
-  destroyPreviewWebview();
-  els.contentBody.replaceChildren();
-  const p = document.createElement('p');
-  p.className = 'placeholder';
-  p.textContent = message;
-  els.contentBody.append(p);
-}
-
-function isAllowedPreviewNavigation(url) {
-  if (!previewOrigin) {
-    return false;
-  }
+/**
+ * @returns {ContentMode}
+ */
+function loadStoredContentMode() {
   try {
-    const target = new URL(url);
-    return target.origin === new URL(previewOrigin).origin;
+    const stored = localStorage.getItem(CONTENT_MODE_STORAGE_KEY);
+    if (stored && CONTENT_MODES.includes(stored)) {
+      return stored;
+    }
   } catch {
-    return false;
+    /* localStorage unavailable */
+  }
+  return 'document';
+}
+
+/**
+ * @param {ContentMode} mode
+ */
+function saveContentMode(mode) {
+  try {
+    localStorage.setItem(CONTENT_MODE_STORAGE_KEY, mode);
+  } catch {
+    /* localStorage unavailable */
   }
 }
+
+/**
+ * @param {ContentMode} mode
+ * @param {{ codeEnabled?: boolean }} [options]
+ * @returns {ContentMode}
+ */
+function resolveContentMode(mode, { codeEnabled = true } = {}) {
+  if (mode === 'code' && !codeEnabled) {
+    const stored = loadStoredContentMode();
+    return stored === 'code' ? 'document' : stored;
+  }
+  return mode;
+}
+
+let previewDevEnabled = null;
+
+/** @type {ContentMode} */
+let browseContentMode = loadStoredContentMode();
+/** @type {{ daPath: string, isFolder: boolean }|null} */
+let browseOpenedItem = null;
+let browseCodeAvailable = false;
+
+/** @type {ContentMode} */
+let reviewContentMode = loadStoredContentMode();
 
 async function previewDevMode() {
   if (previewDevEnabled === null) {
@@ -382,130 +412,477 @@ async function previewDevMode() {
   return previewDevEnabled;
 }
 
-function wirePreviewWebviewDevTools(webview) {
-  webview.addEventListener('dom-ready', () => {
+function setPanePlaceholder(pane, message) {
+  pane.classList.remove('is-preview');
+  pane.replaceChildren();
+  const p = document.createElement('p');
+  p.className = 'placeholder';
+  p.textContent = message;
+  pane.append(p);
+}
+
+/**
+ * @param {HTMLElement} segmentEl
+ * @param {HTMLButtonElement[]} buttons
+ * @param {ContentMode} mode
+ * @param {{ codeEnabled?: boolean }} [options]
+ * @returns {ContentMode}
+ */
+function setSegmentMode(segmentEl, buttons, mode, { codeEnabled = true } = {}) {
+  const activeMode = resolveContentMode(mode, { codeEnabled });
+
+  // DOM state update on the passed segment container.
+  // eslint-disable-next-line no-param-reassign -- dataset drives the sliding thumb position
+  segmentEl.dataset.active = activeMode;
+
+  buttons.forEach((btn, index) => {
+    const btnMode = CONTENT_MODES[index];
+    const isActive = btnMode === activeMode;
+    btn.classList.toggle('is-active', isActive);
+    btn.setAttribute('aria-selected', String(isActive));
+  });
+
+  const codeBtn = buttons[CONTENT_MODES.indexOf('code')];
+  if (codeBtn) {
+    if (codeEnabled) {
+      codeBtn.removeAttribute('disabled');
+    } else {
+      codeBtn.setAttribute('disabled', '');
+    }
+  }
+
+  return activeMode;
+}
+
+/**
+ * @param {{ preview: HTMLElement, code: HTMLElement, document: HTMLElement }} panes
+ * @param {ContentMode} mode
+ */
+function setPaneActive(panes, mode) {
+  panes.preview.classList.toggle('is-active', mode === 'preview');
+  panes.preview.classList.toggle('is-preview', mode === 'preview');
+  panes.code.classList.toggle('is-active', mode === 'code');
+  panes.document.classList.toggle('is-active', mode === 'document');
+}
+
+const browsePanes = () => ({
+  preview: els.contentPreviewPane,
+  code: els.contentCodePane,
+  document: els.contentDocumentPane,
+});
+
+const reviewPanes = () => ({
+  preview: els.reviewPreviewPane,
+  code: els.reviewCodePane,
+  document: els.reviewDocumentPane,
+});
+
+const browseSegmentButtons = () => [
+  els.contentSegmentDocument,
+  els.contentSegmentPreview,
+  els.contentSegmentCode,
+];
+
+const reviewSegmentButtons = () => [
+  els.reviewSegmentDocument,
+  els.reviewSegmentPreview,
+  els.reviewSegmentCode,
+];
+
+/**
+ * @param {HTMLElement} pane
+ * @returns {{
+ *   show: (opts: { url: string, previewOrigin: string }) => void,
+ *   reload: () => void,
+ *   openDevTools: () => void,
+ *   destroy: () => void,
+ *   getWebview: () => (HTMLElement | null),
+ *   getLastPreview: () => ({ url: string, previewOrigin: string } | null),
+ *   renderPlaceholder: (message: string) => void,
+ *   renderSignIn: (onLogin: (button: HTMLButtonElement) => void) => void,
+ * }}
+ */
+function createPreviewController(pane) {
+  let webview = null;
+  let previewOrigin = null;
+  let devToolsAutoOpened = false;
+  /** @type {{ url: string, previewOrigin: string }|null} */
+  let lastPreview = null;
+
+  function destroy() {
+    if (webview) {
+      webview.remove();
+      webview = null;
+      previewOrigin = null;
+      devToolsAutoOpened = false;
+    }
+  }
+
+  function isAllowedPreviewNavigation(url) {
+    if (!previewOrigin) {
+      return false;
+    }
+    try {
+      const target = new URL(url);
+      return target.origin === new URL(previewOrigin).origin;
+    } catch {
+      return false;
+    }
+  }
+
+  function wirePreviewWebviewDevTools(wv) {
+    wv.addEventListener('dom-ready', () => {
+      previewDevMode().then((dev) => {
+        if (!dev || wv !== webview || devToolsAutoOpened) {
+          return;
+        }
+        wv.openDevTools({ mode: 'right' });
+        devToolsAutoOpened = true;
+      });
+    });
+
+    wv.addEventListener('did-fail-load', (event) => {
+      if (event.isMainFrame) {
+        console.error(
+          `[preview] main frame failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
+        );
+      } else {
+        console.warn(
+          `[preview] subresource failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
+        );
+      }
+    });
+
+    wv.addEventListener('console-message', (event) => {
+      const line = `[preview:${event.level}] ${event.message}`;
+      if (event.level >= 3) {
+        console.error(line);
+      } else if (event.level === 2) {
+        console.warn(line);
+      } else {
+        console.info(line);
+      }
+    });
+  }
+
+  function ensureWebview(origin) {
+    if (webview && previewOrigin === origin) {
+      return webview;
+    }
+
+    destroy();
+    pane.replaceChildren();
+    pane.classList.add('is-preview');
+
+    const wv = document.createElement('webview');
+    wv.className = 'preview-webview';
+    wv.setAttribute('allowpopups', 'false');
+    wv.setAttribute('partition', window.aemDesktop.previewWebviewPartition);
+
+    wv.addEventListener('will-navigate', (event) => {
+      if (!isAllowedPreviewNavigation(event.url)) {
+        event.preventDefault();
+        window.aemDesktop.openExternal(event.url);
+      }
+    });
+
+    wv.addEventListener('new-window', (event) => {
+      event.preventDefault();
+      window.aemDesktop.openExternal(event.url);
+    });
+
+    wv.addEventListener('did-start-loading', () => {
+      previewDevMode().then((dev) => {
+        if (dev) {
+          console.info(`[preview] loading ${wv.getURL()}`);
+        }
+      });
+    });
+
+    pane.append(wv);
+    webview = wv;
+    previewOrigin = origin;
+
     previewDevMode().then((dev) => {
-      if (!dev || webview !== previewWebview || previewDevToolsAutoOpened) {
+      if (dev && wv === webview) {
+        wirePreviewWebviewDevTools(wv);
+      }
+    });
+
+    wv.addEventListener('did-finish-load', () => {
+      previewDevMode().then((dev) => {
+        if (dev) {
+          console.info(`[preview] loaded ${wv.getURL()}`);
+        }
+      });
+      checkPreviewAuthError(wv);
+    });
+
+    return wv;
+  }
+
+  return {
+    show({ url, previewOrigin: origin }) {
+      lastPreview = { url, previewOrigin: origin };
+      pane.classList.add('is-preview');
+      const wv = ensureWebview(origin);
+      wv.src = url;
+    },
+    reload() {
+      webview?.reloadIgnoringCache();
+    },
+    openDevTools() {
+      if (webview) {
+        webview.openDevTools({ mode: 'right' });
+        devToolsAutoOpened = true;
+      }
+    },
+    destroy,
+    getWebview: () => webview,
+    getLastPreview: () => lastPreview,
+    renderPlaceholder(message) {
+      pane.classList.remove('is-preview');
+      destroy();
+      setPanePlaceholder(pane, message);
+    },
+    renderSignIn(onLogin) {
+      pane.classList.remove('is-preview');
+      destroy();
+      pane.replaceChildren();
+
+      const wrap = document.createElement('div');
+      wrap.className = 'placeholder preview-signin';
+
+      const message = document.createElement('p');
+      message.textContent = 'This site requires sign-in to preview protected content.';
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn primary';
+      button.textContent = 'Sign in to preview';
+      button.addEventListener('click', () => onLogin(button));
+
+      wrap.append(message, button);
+      pane.append(wrap);
+    },
+  };
+}
+
+const browsePreview = createPreviewController(els.contentPreviewPane);
+const reviewPreview = createPreviewController(els.reviewPreviewPane);
+
+let previewAuthPrompted = false;
+
+function resetBrowseContentView() {
+  browseContentMode = loadStoredContentMode();
+  browseOpenedItem = null;
+  browseCodeAvailable = false;
+  browsePreview.destroy();
+  hide(els.contentToolbar);
+  browseContentMode = setSegmentMode(
+    els.contentSegment,
+    browseSegmentButtons(),
+    browseContentMode,
+    { codeEnabled: false },
+  );
+  setPaneActive(browsePanes(), browseContentMode);
+  const placeholder = 'Select a file from the folder list.';
+  els.contentPreviewPane.replaceChildren();
+  els.contentCodePane.replaceChildren();
+  els.contentDocumentPane.replaceChildren();
+  if (browseContentMode === 'preview') {
+    setPanePlaceholder(els.contentPreviewPane, placeholder);
+  } else if (browseContentMode === 'document') {
+    setPanePlaceholder(els.contentDocumentPane, placeholder);
+  } else {
+    setPanePlaceholder(els.contentCodePane, placeholder);
+  }
+}
+
+function syncBrowseContentView() {
+  if (browseOpenedItem) {
+    show(els.contentToolbar);
+  } else {
+    hide(els.contentToolbar);
+  }
+
+  browseContentMode = setSegmentMode(
+    els.contentSegment,
+    browseSegmentButtons(),
+    browseContentMode,
+    { codeEnabled: browseCodeAvailable },
+  );
+  setPaneActive(browsePanes(), browseContentMode);
+}
+
+function setBrowseContentMode(mode) {
+  if (mode === 'code' && !browseCodeAvailable) {
+    return;
+  }
+  browseContentMode = mode;
+  saveContentMode(mode);
+  syncBrowseContentView();
+  if (!browseOpenedItem) {
+    return;
+  }
+  if (mode === 'code') {
+    loadBrowseCode(browseOpenedItem);
+  } else if (mode === 'document') {
+    loadBrowseDocument(browseOpenedItem);
+  }
+}
+
+function updateBrowseCodeAvailability() {
+  browseCodeAvailable = Boolean(syncFolder);
+  browseContentMode = resolveContentMode(browseContentMode, { codeEnabled: browseCodeAvailable });
+  syncBrowseContentView();
+}
+
+async function loadFileDiff(daPath) {
+  if (!syncFolder || !state.activeSiteId) {
+    return null;
+  }
+
+  const pushStatus = await window.aemDesktop.checkPush({
+    siteId: state.activeSiteId,
+    destFolder: syncFolder,
+  });
+
+  const modified = pushStatus.modified.includes(daPath) ? [daPath] : [];
+  const localNew = pushStatus.localNew.includes(daPath) ? [daPath] : [];
+  const deleted = pushStatus.deleted.includes(daPath) ? [daPath] : [];
+
+  if (modified.length + localNew.length + deleted.length === 0) {
+    return null;
+  }
+
+  const diffs = await window.aemDesktop.getPushDiffs({
+    siteId: state.activeSiteId,
+    destFolder: syncFolder,
+    modified,
+    localNew,
+    deleted,
+  });
+
+  return diffs[0] ?? null;
+}
+
+async function loadBrowseCode(item) {
+  setPanePlaceholder(els.contentCodePane, 'Loading changes…');
+  try {
+    const file = await loadFileDiff(item.daPath);
+    if (!file) {
+      setPanePlaceholder(els.contentCodePane, 'No local changes for this file.');
+      return;
+    }
+    renderDiffView(els.contentCodePane, file);
+  } catch (err) {
+    setPanePlaceholder(els.contentCodePane, err.message || 'Failed to load changes.');
+  }
+}
+
+async function loadDocumentViewForPath(daPath, pane) {
+  setPanePlaceholder(pane, 'Loading document…');
+  try {
+    // Local changes render as a track-changes diff against the synced
+    // original; otherwise fall back to the plain remote document.
+    if (syncFolder) {
+      const localDiff = await window.aemDesktop.getDocumentDiff(
+        state.activeSiteId,
+        syncFolder,
+        daPath,
+      );
+      if (localDiff && localDiff.status !== 'unchanged') {
+        renderDocumentDiffView(pane, localDiff.diff);
         return;
       }
-      webview.openDevTools({ mode: 'right' });
-      previewDevToolsAutoOpened = true;
+    }
+    const source = await window.aemDesktop.getDaSource(state.activeSiteId, daPath);
+    if (!source) {
+      setPanePlaceholder(pane, 'No source content.');
+      return;
+    }
+    if (source.mode !== 'html') {
+      setPanePlaceholder(pane, 'Document view is only available for HTML files.');
+      return;
+    }
+    const model = await window.aemDesktop.parseDocumentView(source.text);
+    renderDocumentView(pane, model);
+  } catch (err) {
+    setPanePlaceholder(pane, err.message || 'Failed to load document.');
+  }
+}
+
+async function loadBrowseDocument(item) {
+  await loadDocumentViewForPath(item.daPath, els.contentDocumentPane);
+}
+
+function refreshBrowseOpenedFile() {
+  if (!browseOpenedItem) {
+    return;
+  }
+  updateBrowseCodeAvailability();
+  if (browseContentMode === 'code') {
+    loadBrowseCode(browseOpenedItem);
+  } else if (browseContentMode === 'document') {
+    loadBrowseDocument(browseOpenedItem);
+  }
+}
+
+function syncReviewContentView() {
+  if (reviewFocusPath) {
+    show(els.reviewContentToolbar);
+  } else {
+    hide(els.reviewContentToolbar);
+  }
+
+  reviewContentMode = setSegmentMode(
+    els.reviewSegment,
+    reviewSegmentButtons(),
+    reviewContentMode,
+  );
+  setPaneActive(reviewPanes(), reviewContentMode);
+}
+
+function setReviewContentMode(mode) {
+  reviewContentMode = mode;
+  saveContentMode(mode);
+  syncReviewContentView();
+  if (!reviewFocusPath) {
+    return;
+  }
+  if (mode === 'preview') {
+    loadReviewPreview(reviewFocusPath);
+  } else if (mode === 'document') {
+    loadReviewDocument(reviewFocusPath);
+  }
+}
+
+async function loadReviewDocument(daPath) {
+  await loadDocumentViewForPath(daPath, els.reviewDocumentPane);
+}
+
+async function loadReviewPreview(daPath) {
+  if (!state.activeSiteId) {
+    return;
+  }
+  try {
+    const preview = await window.aemDesktop.buildPreviewUrl(state.activeSiteId, daPath);
+    reviewPreview.show({
+      url: preview.url,
+      previewOrigin: preview.previewOrigin,
     });
-  });
-
-  webview.addEventListener('did-fail-load', (event) => {
-    if (event.isMainFrame) {
-      console.error(
-        `[preview] main frame failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
-      );
-    } else {
-      console.warn(
-        `[preview] subresource failed: ${event.errorDescription} (${event.errorCode}) ${event.validatedURL}`,
-      );
-    }
-  });
-
-  webview.addEventListener('console-message', (event) => {
-    const line = `[preview:${event.level}] ${event.message}`;
-    if (event.level >= 3) {
-      console.error(line);
-    } else if (event.level === 2) {
-      console.warn(line);
-    } else {
-      console.info(line);
-    }
-  });
+  } catch (err) {
+    reviewPreview.renderPlaceholder(err.message || 'Failed to load preview.');
+  }
 }
 
 function openPreviewDevTools() {
-  if (previewWebview) {
-    previewWebview.openDevTools({ mode: 'right' });
-    previewDevToolsAutoOpened = true;
+  if (state.view === 'review') {
+    reviewPreview.openDevTools();
+    return;
   }
-}
-
-function ensurePreviewWebview(origin) {
-  if (previewWebview && previewOrigin === origin) {
-    return previewWebview;
-  }
-
-  destroyPreviewWebview();
-  els.contentBody.replaceChildren();
-
-  const webview = document.createElement('webview');
-  webview.className = 'preview-webview';
-  webview.setAttribute('allowpopups', 'false');
-
-  webview.addEventListener('will-navigate', (event) => {
-    if (!isAllowedPreviewNavigation(event.url)) {
-      event.preventDefault();
-      window.aemDesktop.openExternal(event.url);
-    }
-  });
-
-  webview.addEventListener('new-window', (event) => {
-    event.preventDefault();
-    window.aemDesktop.openExternal(event.url);
-  });
-
-  webview.addEventListener('did-start-loading', () => {
-    previewDevMode().then((dev) => {
-      if (dev) {
-        console.info(`[preview] loading ${webview.getURL()}`);
-      }
-    });
-  });
-
-  els.contentBody.append(webview);
-  previewWebview = webview;
-  previewOrigin = origin;
-
-  previewDevMode().then((dev) => {
-    if (dev && webview === previewWebview) {
-      wirePreviewWebviewDevTools(webview);
-    }
-  });
-
-  webview.addEventListener('did-finish-load', () => {
-    previewDevMode().then((dev) => {
-      if (dev) {
-        console.info(`[preview] loaded ${webview.getURL()}`);
-      }
-    });
-    checkPreviewAuthError(webview);
-  });
-
-  return webview;
-}
-
-function showPreview({ url, previewOrigin: origin }) {
-  els.contentBody.classList.add('is-preview');
-  lastPreview = { url, previewOrigin: origin };
-  previewAuthPrompted = false;
-
-  const webview = ensurePreviewWebview(origin);
-  webview.src = url;
-}
-
-function renderPreviewSignIn() {
-  els.contentBody.classList.remove('is-preview');
-  destroyPreviewWebview();
-  els.contentBody.replaceChildren();
-
-  const wrap = document.createElement('div');
-  wrap.className = 'placeholder preview-signin';
-
-  const message = document.createElement('p');
-  message.textContent = 'This site requires sign-in to preview protected content.';
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'btn primary';
-  button.textContent = 'Sign in to preview';
-  button.addEventListener('click', () => doPreviewLogin(button));
-
-  wrap.append(message, button);
-  els.contentBody.append(wrap);
+  browsePreview.openDevTools();
 }
 
 async function doPreviewLogin(button) {
@@ -517,8 +894,9 @@ async function doPreviewLogin(button) {
   btn.textContent = 'Signing in…';
   try {
     const result = await window.aemDesktop.loginPreview(state.activeSiteId);
+    const lastPreview = browsePreview.getLastPreview();
     if (result?.ok && lastPreview) {
-      showPreview(lastPreview);
+      browsePreview.show(lastPreview);
       return;
     }
     btn.textContent = result?.error ? 'Sign-in failed — try again' : 'Sign in to preview';
@@ -537,11 +915,11 @@ function handlePreviewAuthRequired({ previewUrl } = {}) {
     return;
   }
   previewAuthPrompted = true;
-  renderPreviewSignIn();
+  browsePreview.renderSignIn(doPreviewLogin);
 }
 
 async function detectPreviewAuthStatus(webview) {
-  if (!webview || webview !== previewWebview) {
+  if (!webview || webview !== browsePreview.getWebview()) {
     return null;
   }
   try {
@@ -702,9 +1080,7 @@ async function hardRefresh() {
   state.tree.cache = {};
   state.tree.syncBadges = new Map();
 
-  if (previewWebview) {
-    previewWebview.reloadIgnoringCache();
-  }
+  browsePreview.reload();
 
   for (const daPath of expanded) {
     await loadFolder(daPath); // eslint-disable-line no-await-in-loop
@@ -838,16 +1214,27 @@ async function previewFile(item) {
     return;
   }
 
+  browseOpenedItem = item;
   state.tree.openedDaPath = item.daPath;
+  updateBrowseCodeAvailability();
+  previewAuthPrompted = false;
 
   try {
     const preview = await window.aemDesktop.buildPreviewUrl(state.activeSiteId, item.daPath);
-    showPreview({
+    browsePreview.show({
       url: preview.url,
       previewOrigin: preview.previewOrigin,
     });
+    syncBrowseContentView();
+    if (browseContentMode === 'code') {
+      await loadBrowseCode(item);
+    } else if (browseContentMode === 'document') {
+      await loadBrowseDocument(item);
+    }
   } catch (err) {
-    renderContentPlaceholder(err.message || 'Failed to load preview');
+    browseOpenedItem = null;
+    browsePreview.renderPlaceholder(err.message || 'Failed to load preview');
+    syncBrowseContentView();
   }
 }
 
@@ -1153,6 +1540,7 @@ function mergeSyncBadges(badges) {
   }
   updatePullChangesFromBadges();
   paintFileTree();
+  refreshBrowseOpenedFile();
 }
 
 function updatePullChangesFromBadges() {
@@ -1686,8 +2074,13 @@ function paintReviewFileList() {
 function showReviewDiff(daPath) {
   const file = reviewDiffs.find((d) => d.daPath === daPath);
   if (file) {
-    renderDiffView(els.reviewDiffBody, file);
+    renderDiffView(els.reviewCodePane, file);
   }
+  loadReviewPreview(daPath);
+  if (reviewContentMode === 'document') {
+    loadReviewDocument(daPath);
+  }
+  syncReviewContentView();
 }
 
 function focusReviewFile(daPath) {
@@ -1768,11 +2161,19 @@ function updateReviewActionButtons({ forceDisabled = false } = {}) {
 }
 
 function renderReviewPlaceholder(message) {
-  els.reviewDiffBody.replaceChildren();
-  const p = document.createElement('p');
-  p.className = 'placeholder';
-  p.textContent = message;
-  els.reviewDiffBody.append(p);
+  reviewPreview.destroy();
+  reviewContentMode = loadStoredContentMode();
+  els.reviewCodePane.replaceChildren();
+  els.reviewPreviewPane.replaceChildren();
+  els.reviewDocumentPane.replaceChildren();
+  if (reviewContentMode === 'preview') {
+    setPanePlaceholder(els.reviewPreviewPane, message);
+  } else if (reviewContentMode === 'document') {
+    setPanePlaceholder(els.reviewDocumentPane, message);
+  } else {
+    setPanePlaceholder(els.reviewCodePane, message);
+  }
+  syncReviewContentView();
 }
 
 async function loadReviewChanges() {
@@ -1918,6 +2319,8 @@ async function openPushModal() {
   reviewAnchorPath = null;
   reviewFocusPath = null;
   reviewCheckedPaths = new Set();
+  reviewContentMode = loadStoredContentMode();
+  reviewPreview.destroy();
   els.reviewPush.disabled = true;
   els.reviewRevert.disabled = true;
   els.reviewPush.textContent = 'Push changes';
@@ -1979,6 +2382,8 @@ function closeReviewView() {
     removeRevertProgressListener = null;
   }
   resetReviewProgressUi();
+  reviewPreview.destroy();
+  reviewContentMode = loadStoredContentMode();
   reviewDiffs = [];
   reviewSelectedPaths = new Set();
   reviewAnchorPath = null;
@@ -2417,6 +2822,38 @@ function wireUi() {
   els.reviewCancel.addEventListener('click', handleReviewCancelClick);
   els.reviewCopyPreviewUrls.addEventListener('click', copyReviewPreviewUrls);
   els.reviewPreviewPublish.addEventListener('click', openHelix6Modal);
+  els.contentSegmentPreview.addEventListener('click', () => {
+    if (browseContentMode !== 'preview') {
+      setBrowseContentMode('preview');
+    }
+  });
+  els.contentSegmentCode.addEventListener('click', () => {
+    if (els.contentSegmentCode.disabled || browseContentMode === 'code') {
+      return;
+    }
+    setBrowseContentMode('code');
+  });
+  els.contentSegmentDocument.addEventListener('click', () => {
+    if (browseContentMode === 'document') {
+      return;
+    }
+    setBrowseContentMode('document');
+  });
+  els.reviewSegmentPreview.addEventListener('click', () => {
+    if (reviewContentMode !== 'preview') {
+      setReviewContentMode('preview');
+    }
+  });
+  els.reviewSegmentCode.addEventListener('click', () => {
+    if (reviewContentMode !== 'code') {
+      setReviewContentMode('code');
+    }
+  });
+  els.reviewSegmentDocument.addEventListener('click', () => {
+    if (reviewContentMode !== 'document') {
+      setReviewContentMode('document');
+    }
+  });
   els.helix6Start.addEventListener('click', startHelix6Bulk);
   els.helix6Cancel.addEventListener('click', handleHelix6CancelClick);
   els.helix6Modal.addEventListener('click', (event) => {
@@ -2456,6 +2893,8 @@ async function init() {
   wireUi();
   state.icons = await loadIcons();
   await loadSyncFolderPreference();
+  updateBrowseCodeAvailability();
+  syncReviewContentView();
   await refreshAuthStatus();
   await loadSites();
   window.aemDesktop.onPreviewAuthRequired(handlePreviewAuthRequired);

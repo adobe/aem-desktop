@@ -1,0 +1,207 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * Document view styling aligned with adobe/da-live blocks/edit/da-editor/da-editor.css
+ */
+
+.document-view {
+  padding: 0;
+  overflow: auto;
+  background: var(--panel-bg);
+}
+
+.da-document-view {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem 2rem;
+  background: #fff;
+  color: #464646;
+  font-family: var(--s2-font-family, 'Adobe Clean', sans-serif);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.da-document-content {
+  margin: 0.35rem 0 0.75rem;
+}
+
+.da-document-content :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.75rem 0 0.35rem;
+  color: #222;
+}
+
+.da-document-content p {
+  margin: 0.35rem 0;
+}
+
+.da-document-content a {
+  color: #0265dc;
+}
+
+.da-document-view hr {
+  border: none;
+  border-radius: 1px;
+  border-top: 1px solid #b3b3b3;
+  position: relative;
+  overflow: visible;
+  margin: 1.25rem 0;
+}
+
+.da-document-view hr::after {
+  left: 50%;
+  position: absolute;
+  content: 'Section Break';
+  text-transform: uppercase;
+  background: #fff;
+  top: -10px;
+  font-weight: 700;
+  color: #b3b3b3;
+  padding: 0 6px;
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+
+.da-document-view .tableWrapper {
+  overflow-x: auto;
+  border: 2px solid #b1b1b1;
+  border-radius: 6px;
+  margin: 2px 0 0.75rem;
+}
+
+.da-document-view table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  overflow: hidden;
+  border-style: hidden;
+}
+
+.da-document-view tr:first-child td,
+.da-document-view tr:first-child th {
+  background: #f1f1f1;
+  text-align: center;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.da-document-view td,
+.da-document-view th {
+  border: 2px solid #b1b1b1;
+  vertical-align: top;
+  min-width: 100px;
+  padding: 8px;
+  color: #464646;
+  box-sizing: border-box;
+}
+
+.da-document-view a {
+  color: #0265dc;
+  word-break: break-all;
+}
+
+.da-document-view img {
+  display: block;
+  max-width: 100%;
+  max-height: 14rem;
+  border-radius: 3px;
+}
+
+.da-document-view img[href] {
+  border: #5faaf9 4px solid;
+  box-sizing: border-box;
+}
+
+/* Track-changes diff (da-document-diff) */
+
+.da-document-view ins.da-diff-ins {
+  background: #dafbe1;
+  color: #116329;
+  text-decoration: underline;
+  text-decoration-skip-ink: none;
+}
+
+.da-document-view del.da-diff-del {
+  background: #ffebe9;
+  color: #cf222e;
+  text-decoration: line-through;
+}
+
+.da-document-view .da-diff-added {
+  background: #f2fbf4;
+  box-shadow: inset 3px 0 0 #1a7f37;
+  color: #116329;
+  text-decoration: underline;
+  text-decoration-color: rgb(26 127 55 / 45%);
+  text-decoration-skip-ink: none;
+}
+
+.da-document-view .da-diff-removed {
+  background: #fff5f5;
+  box-shadow: inset 3px 0 0 #cf222e;
+  color: #cf222e;
+  text-decoration: line-through;
+  text-decoration-color: rgb(207 34 46 / 60%);
+}
+
+.da-document-view :is(.da-diff-added, .da-diff-removed)
+  :is(h1, h2, h3, h4, h5, h6, a, td) {
+  color: inherit;
+}
+
+/* text-decoration does not propagate into tables — restate it on cells */
+.da-document-view .tableWrapper.da-diff-added td {
+  text-decoration: underline;
+  text-decoration-color: rgb(26 127 55 / 45%);
+  text-decoration-skip-ink: none;
+}
+
+.da-document-view .tableWrapper.da-diff-removed td {
+  text-decoration: line-through;
+  text-decoration-color: rgb(207 34 46 / 60%);
+}
+
+.da-document-view .tableWrapper.da-diff-added {
+  border-color: #1a7f37;
+}
+
+.da-document-view .tableWrapper.da-diff-removed {
+  border-color: #cf222e;
+}
+
+.da-document-view tr.da-diff-row-added td {
+  background: #f2fbf4;
+  color: #116329;
+}
+
+.da-document-view tr.da-diff-row-removed td {
+  background: #fff5f5;
+  color: #cf222e;
+  text-decoration: line-through;
+  text-decoration-color: rgb(207 34 46 / 60%);
+}
+
+.da-document-view :is(.da-diff-removed, tr.da-diff-row-removed) img,
+.da-document-view del.da-diff-del img {
+  opacity: 0.45;
+}
+
+.da-document-view hr.da-diff-break-added {
+  border-top-color: #1a7f37;
+}
+
+.da-document-view hr.da-diff-break-added::after {
+  content: 'Section Break (added)';
+  color: #1a7f37;
+}
+
+.da-document-view hr.da-diff-break-removed {
+  border-top-color: #cf222e;
+  border-top-style: dashed;
+}
+
+.da-document-view hr.da-diff-break-removed::after {
+  content: 'Section Break (removed)';
+  color: #cf222e;
+  text-decoration: line-through;
+}

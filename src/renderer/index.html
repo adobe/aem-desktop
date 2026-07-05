@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="s2-tokens.css" />
     <link rel="stylesheet" href="file-tree.css" />
     <link rel="stylesheet" href="review-view.css" />
+    <link rel="stylesheet" href="document-view.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -76,8 +77,51 @@
         </aside>
 
         <main class="content">
-          <div id="content-body" class="content-body">
-            <p class="placeholder">Select a file from the folder list.</p>
+          <header id="content-toolbar" class="content-toolbar hidden" hidden>
+            <div
+              id="content-segment"
+              class="segmented-control"
+              role="tablist"
+              aria-label="Content view"
+              data-active="document"
+            >
+              <span class="segmented-control-thumb" aria-hidden="true"></span>
+              <button
+                type="button"
+                id="content-segment-document"
+                class="segmented-control-btn is-active"
+                role="tab"
+                aria-selected="true"
+              >
+                Document
+              </button>
+              <button
+                type="button"
+                id="content-segment-preview"
+                class="segmented-control-btn"
+                role="tab"
+                aria-selected="false"
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                id="content-segment-code"
+                class="segmented-control-btn"
+                role="tab"
+                aria-selected="false"
+                disabled
+              >
+                Code
+              </button>
+            </div>
+          </header>
+          <div class="content-panes">
+            <div id="content-preview-pane" class="content-pane"></div>
+            <div id="content-code-pane" class="content-pane"></div>
+            <div id="content-document-pane" class="content-pane is-active">
+              <p class="placeholder">Select a file from the folder list.</p>
+            </div>
           </div>
         </main>
       </div>
@@ -120,8 +164,50 @@
         </aside>
 
         <main class="review-content">
-          <div id="review-diff-body" class="review-diff-body">
-            <p class="placeholder">Select a file to see changes.</p>
+          <header id="review-content-toolbar" class="content-toolbar hidden" hidden>
+            <div
+              id="review-segment"
+              class="segmented-control"
+              role="tablist"
+              aria-label="Content view"
+              data-active="document"
+            >
+              <span class="segmented-control-thumb" aria-hidden="true"></span>
+              <button
+                type="button"
+                id="review-segment-document"
+                class="segmented-control-btn is-active"
+                role="tab"
+                aria-selected="true"
+              >
+                Document
+              </button>
+              <button
+                type="button"
+                id="review-segment-preview"
+                class="segmented-control-btn"
+                role="tab"
+                aria-selected="false"
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                id="review-segment-code"
+                class="segmented-control-btn"
+                role="tab"
+                aria-selected="false"
+              >
+                Code
+              </button>
+            </div>
+          </header>
+          <div class="content-panes review-panes">
+            <div id="review-preview-pane" class="content-pane"></div>
+            <div id="review-code-pane" class="content-pane"></div>
+            <div id="review-document-pane" class="content-pane is-active">
+              <p class="placeholder">Select a file to see changes.</p>
+            </div>
           </div>
         </main>
       </div>

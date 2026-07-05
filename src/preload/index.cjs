@@ -31,7 +31,13 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   logoutDa: () => ipcRenderer.invoke('da:logout'),
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
+  parseDocumentView: (html) => ipcRenderer.invoke('document:parse', { html }),
+  getDocumentDiff: (siteId, destFolder, daPath) => ipcRenderer.invoke(
+    'document:diff',
+    { siteId, destFolder, daPath },
+  ),
   buildPreviewUrl: (siteId, daPath) => ipcRenderer.invoke('preview:build-url', { siteId, daPath }),
+  previewWebviewPartition: 'persist:aem-preview',
   buildAemPreviewUrls: (siteId, daPaths) => ipcRenderer.invoke(
     'preview:build-aem-urls',
     { siteId, daPaths },
