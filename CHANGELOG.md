@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/adobe/aem-desktop/compare/v1.5.0...v1.6.0) (2026-07-05)
+
+
+### Features
+
+* add Document, Preview, and Code content views ([06018f2](https://github.com/adobe/aem-desktop/commit/06018f230b26b3f8701e3ffa82461c7a660073f0))
+
 # [1.5.0](https://github.com/adobe/aem-desktop/compare/v1.4.0...v1.5.0) (2026-07-04)
 
 
