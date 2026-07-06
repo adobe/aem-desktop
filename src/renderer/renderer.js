@@ -234,11 +234,27 @@ function hide(element) {
   element.hidden = true;
 }
 
+/** Matches {@link DA_UNAUTHORIZED_MESSAGE} in content-api-shared.js. */
+const DA_UNAUTHORIZED_SNIPPET = 'Unauthorized: invalid or expired token';
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isDaUnauthorizedError(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(DA_UNAUTHORIZED_SNIPPET);
+}
+
 /**
  * @param {string} title
  * @param {{ message?: string, xError?: string|null, detail?: string }|Error|string} error
  */
 async function showRequestErrorDialog(title, error) {
+  if (isDaUnauthorizedError(error)) {
+    await refreshAuthStatus();
+    return;
+  }
   const payload = typeof error === 'string'
     ? { message: error }
     : error;
@@ -809,6 +825,10 @@ async function loadDocumentViewForPath(daPath, pane) {
     const model = await window.aemDesktop.parseDocumentView(source.text);
     renderDocumentView(pane, model);
   } catch (err) {
+    if (isDaUnauthorizedError(err)) {
+      await refreshAuthStatus();
+      return;
+    }
     setPanePlaceholder(pane, err.message || 'Failed to load document.');
   }
 }
@@ -1008,6 +1028,10 @@ async function loadFolder(daPath) {
     state.tree.cache[daPath] = items;
     await refreshLocalBadgesForFolder(daPath);
   } catch (err) {
+    if (isDaUnauthorizedError(err)) {
+      await refreshAuthStatus();
+      return;
+    }
     if (daPath === '/') {
       state.tree.error = err.message || 'Failed to list folder';
     }
@@ -2898,6 +2922,9 @@ async function init() {
   await refreshAuthStatus();
   await loadSites();
   window.aemDesktop.onPreviewAuthRequired(handlePreviewAuthRequired);
+  window.aemDesktop.onDaSessionExpired(() => {
+    refreshAuthStatus();
+  });
   showView('home');
 }
 

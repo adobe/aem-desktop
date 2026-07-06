@@ -14,6 +14,8 @@ import assert from 'node:assert/strict';
 import {
   API_BACKEND_DA_LIVE,
   buildPostUploadRequest,
+  DA_UNAUTHORIZED_MESSAGE,
+  isDaUnauthorizedError,
   normalizeDaPath,
   toApiRelativePath,
 } from '../src/main/content-api-shared.js';
@@ -33,4 +35,13 @@ test('buildPostUploadRequest sets filename from daPath for da.live', () => {
     '/blog/post.html',
   );
   assert.ok(body instanceof FormData);
+});
+
+test('isDaUnauthorizedError detects API and IPC-wrapped unauthorized errors', () => {
+  assert.equal(isDaUnauthorizedError(new Error(DA_UNAUTHORIZED_MESSAGE)), true);
+  assert.equal(
+    isDaUnauthorizedError(new Error("Error invoking remote method 'da:list': Error: Unauthorized: invalid or expired token")),
+    true,
+  );
+  assert.equal(isDaUnauthorizedError(new Error('List failed for /')), false);
 });

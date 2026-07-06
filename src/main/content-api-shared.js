@@ -13,6 +13,18 @@
 export const API_BACKEND_DA_LIVE = 'da.live';
 export const API_BACKEND_AEM_API = 'api.aem.live';
 
+/** Thrown when da.live / api.aem.live rejects the IMS bearer token. */
+export const DA_UNAUTHORIZED_MESSAGE = 'Unauthorized: invalid or expired token';
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isDaUnauthorizedError(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(DA_UNAUTHORIZED_MESSAGE);
+}
+
 /**
  * @param {string} backend
  * @returns {boolean}

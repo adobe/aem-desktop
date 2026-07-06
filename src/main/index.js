@@ -20,11 +20,15 @@ import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
 import { screenshotFilename } from './dev-config.js';
 import { toDaPath } from './aem-page-url.js';
-import { API_BACKEND_AEM_API, API_BACKEND_DA_LIVE } from './content-api-shared.js';
+import {
+  API_BACKEND_AEM_API,
+  API_BACKEND_DA_LIVE,
+  isDaUnauthorizedError,
+} from './content-api-shared.js';
 import { ContentApiClient } from './content-api-client.js';
 import { HttpRequestError } from './http-request-error.js';
 import {
-  DA_TOKEN_FILENAME, getAuthStatus, getValidToken, logout,
+  DA_TOKEN_FILENAME, clearStoredToken, getAuthStatus, getValidToken, logout,
 } from './da-auth.js';
 import {
   isSiteTokenExpired,
@@ -230,7 +234,18 @@ async function withContentClient(site, fn) {
     openBrowser: (url) => shell.openExternal(url),
   });
   const backend = site.apiBackend || API_BACKEND_DA_LIVE;
-  return fn(new ContentApiClient(accessToken, backend));
+  try {
+    return await fn(new ContentApiClient(accessToken, backend));
+  } catch (err) {
+    if (isDaUnauthorizedError(err)) {
+      await clearStoredToken(tokenPath());
+      contentDaLiveAuth?.clearCache();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('da:session-expired');
+      }
+    }
+    throw err;
+  }
 }
 
 async function createWindow() {
