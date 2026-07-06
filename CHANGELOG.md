@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/adobe/aem-desktop/compare/v1.6.0...v1.6.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* handle expired DA token without raw IPC errors ([bd65790](https://github.com/adobe/aem-desktop/commit/bd65790ebbfdd925b3a57b7a4da30278eda61bac))
+
 # [1.6.0](https://github.com/adobe/aem-desktop/compare/v1.5.0...v1.6.0) (2026-07-05)
 
 
