@@ -22,6 +22,7 @@ import {
   API_BACKEND_AEM_API,
   API_BACKEND_DA_LIVE,
   buildPostUploadRequest,
+  DA_UNAUTHORIZED_MESSAGE,
   isValidApiBackend,
   normalizeDaPath,
 } from './content-api-shared.js';
@@ -87,7 +88,7 @@ export class ContentApiClient {
       }
       const res = await this.fetch(url, { headers, cache: 'reload' }); // eslint-disable-line no-await-in-loop
       if (res.status === 401) {
-        throw new Error('Unauthorized: invalid or expired token');
+        throw new Error(DA_UNAUTHORIZED_MESSAGE);
       }
       if (!res.ok) {
         throw await buildHttpError('GET', url, res, `List failed for ${normalized}`); // eslint-disable-line no-await-in-loop
@@ -119,7 +120,7 @@ export class ContentApiClient {
     const url = buildAemApiListUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (!res.ok) {
       throw await buildHttpError('GET', url, res, `List failed for ${normalized}`);
@@ -146,7 +147,7 @@ export class ContentApiClient {
       : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (res.status === 404) {
       return null;
@@ -175,7 +176,7 @@ export class ContentApiClient {
       : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (res.status === 404) {
       return null;
@@ -221,7 +222,7 @@ export class ContentApiClient {
       body,
     });
     if (putRes.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (putRes.ok) {
       return;
@@ -234,7 +235,7 @@ export class ContentApiClient {
         body: post.body,
       });
       if (postRes.status === 401) {
-        throw new Error('Unauthorized: invalid or expired token');
+        throw new Error(DA_UNAUTHORIZED_MESSAGE);
       }
       if (postRes.ok) {
         return;
@@ -262,7 +263,7 @@ export class ContentApiClient {
       headers: this.authHeader,
     });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (!res.ok && res.status !== 404) {
       throw await buildHttpError('DELETE', url, res, `Delete failed for ${normalized}`);
@@ -284,7 +285,7 @@ export class ContentApiClient {
       body: JSON.stringify({ paths, forceAsync: true }),
     });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (!res.ok && res.status !== 202) {
       throw await buildHttpError('POST', url, res, 'Bulk preview failed');
@@ -307,7 +308,7 @@ export class ContentApiClient {
       body: JSON.stringify({ paths, forceAsync: true }),
     });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (!res.ok && res.status !== 202) {
       throw await buildHttpError('POST', url, res, 'Bulk publish failed');
@@ -327,7 +328,7 @@ export class ContentApiClient {
     const url = buildAemApiJobUrl(org, repo, topic, jobName);
     const res = await this.fetch(url, { headers: this.authHeader });
     if (res.status === 401) {
-      throw new Error('Unauthorized: invalid or expired token');
+      throw new Error(DA_UNAUTHORIZED_MESSAGE);
     }
     if (!res.ok && res.status !== 202) {
       throw await buildHttpError('GET', url, res, 'Job status failed');
