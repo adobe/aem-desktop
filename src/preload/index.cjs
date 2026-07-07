@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   loginDa: () => ipcRenderer.invoke('da:login'),
   logoutDa: () => ipcRenderer.invoke('da:logout'),
   onDaSessionExpired: (callback) => {
-    const handler = () => callback();
+    const handler = (_event, data) => callback(data);
     ipcRenderer.on('da:session-expired', handler);
     return () => ipcRenderer.removeListener('da:session-expired', handler);
   },

@@ -11,9 +11,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { API_BACKEND_AEM_API, API_BACKEND_DA_LIVE } from '../src/main/content-api-shared.js';
+import {
+  API_BACKEND_AEM_API,
+  API_BACKEND_DA_LIVE,
+  isDaUnauthorizedError,
+} from '../src/main/content-api-shared.js';
 import { ContentApiClient } from '../src/main/content-api-client.js';
-import { composeHttpErrorMessage } from '../src/main/http-request-error.js';
+import { composeHttpErrorMessage, HttpRequestError } from '../src/main/http-request-error.js';
 
 test('composeHttpErrorMessage includes x-error header', () => {
   const message = composeHttpErrorMessage({
@@ -27,6 +31,28 @@ test('composeHttpErrorMessage includes x-error header', () => {
   });
   assert.match(message, /x-error: Invalid path format/);
   assert.match(message, /400 Bad Request/);
+});
+
+test('401 errors keep the unauthorized prefix and carry request detail', async () => {
+  const fetchImpl = async () => new Response('token rejected', {
+    status: 401,
+    statusText: 'Unauthorized',
+    headers: { 'x-error': 'IMS token validation failed' },
+  });
+  const client = new ContentApiClient('token', API_BACKEND_DA_LIVE, fetchImpl);
+
+  await assert.rejects(
+    () => client.list('org', 'site', '/'),
+    (err) => {
+      assert.ok(isDaUnauthorizedError(err));
+      assert.ok(err instanceof HttpRequestError);
+      assert.equal(err.status, 401);
+      assert.match(err.message, /GET https:\/\/admin\.da\.live\/list\/org\/site\//);
+      assert.match(err.message, /x-error: IMS token validation failed/);
+      assert.match(err.message, /token rejected/);
+      return true;
+    },
+  );
 });
 
 test('uploadSource retries with POST when PUT returns 400', async () => {

@@ -36,6 +36,20 @@ import { buildHttpError } from './http-request-error.js';
 const LIST_MAX_PAGES = 50000;
 
 /**
+ * Builds a 401 error that keeps the {@link DA_UNAUTHORIZED_MESSAGE} prefix
+ * (session-expiry detection matches on it) while carrying the request,
+ * `x-error` header, and body detail for diagnosis.
+ *
+ * @param {string} method
+ * @param {string} url
+ * @param {Response} res
+ * @returns {Promise<import('./http-request-error.js').HttpRequestError>}
+ */
+function buildUnauthorizedError(method, url, res) {
+  return buildHttpError(method, url, res, DA_UNAUTHORIZED_MESSAGE);
+}
+
+/**
  * HTTP client for da.live admin and api.aem.live (helix6) content APIs.
  */
 export class ContentApiClient {
@@ -88,7 +102,7 @@ export class ContentApiClient {
       }
       const res = await this.fetch(url, { headers, cache: 'reload' }); // eslint-disable-line no-await-in-loop
       if (res.status === 401) {
-        throw new Error(DA_UNAUTHORIZED_MESSAGE);
+        throw await buildUnauthorizedError('GET', url, res); // eslint-disable-line no-await-in-loop
       }
       if (!res.ok) {
         throw await buildHttpError('GET', url, res, `List failed for ${normalized}`); // eslint-disable-line no-await-in-loop
@@ -120,7 +134,7 @@ export class ContentApiClient {
     const url = buildAemApiListUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('GET', url, res);
     }
     if (!res.ok) {
       throw await buildHttpError('GET', url, res, `List failed for ${normalized}`);
@@ -147,7 +161,7 @@ export class ContentApiClient {
       : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('GET', url, res);
     }
     if (res.status === 404) {
       return null;
@@ -176,7 +190,7 @@ export class ContentApiClient {
       : buildDaLiveSourceUrl(org, repo, normalized);
     const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('GET', url, res);
     }
     if (res.status === 404) {
       return null;
@@ -222,7 +236,7 @@ export class ContentApiClient {
       body,
     });
     if (putRes.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('PUT', url, putRes);
     }
     if (putRes.ok) {
       return;
@@ -235,7 +249,7 @@ export class ContentApiClient {
         body: post.body,
       });
       if (postRes.status === 401) {
-        throw new Error(DA_UNAUTHORIZED_MESSAGE);
+        throw await buildUnauthorizedError('POST', url, postRes);
       }
       if (postRes.ok) {
         return;
@@ -263,7 +277,7 @@ export class ContentApiClient {
       headers: this.authHeader,
     });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('DELETE', url, res);
     }
     if (!res.ok && res.status !== 404) {
       throw await buildHttpError('DELETE', url, res, `Delete failed for ${normalized}`);
@@ -285,7 +299,7 @@ export class ContentApiClient {
       body: JSON.stringify({ paths, forceAsync: true }),
     });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('POST', url, res);
     }
     if (!res.ok && res.status !== 202) {
       throw await buildHttpError('POST', url, res, 'Bulk preview failed');
@@ -308,7 +322,7 @@ export class ContentApiClient {
       body: JSON.stringify({ paths, forceAsync: true }),
     });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('POST', url, res);
     }
     if (!res.ok && res.status !== 202) {
       throw await buildHttpError('POST', url, res, 'Bulk publish failed');
@@ -328,7 +342,7 @@ export class ContentApiClient {
     const url = buildAemApiJobUrl(org, repo, topic, jobName);
     const res = await this.fetch(url, { headers: this.authHeader });
     if (res.status === 401) {
-      throw new Error(DA_UNAUTHORIZED_MESSAGE);
+      throw await buildUnauthorizedError('GET', url, res);
     }
     if (!res.ok && res.status !== 202) {
       throw await buildHttpError('GET', url, res, 'Job status failed');

@@ -2922,8 +2922,15 @@ async function init() {
   await refreshAuthStatus();
   await loadSites();
   window.aemDesktop.onPreviewAuthRequired(handlePreviewAuthRequired);
-  window.aemDesktop.onDaSessionExpired(() => {
-    refreshAuthStatus();
+  window.aemDesktop.onDaSessionExpired(async (info) => {
+    if (info?.message) {
+      console.warn(`[da] session expired: ${info.message}`);
+    }
+    await refreshAuthStatus();
+    if (!state.authenticated) {
+      els.authStatus.textContent = 'AEM sign-in expired or was rejected — sign in again';
+      els.authStatus.title = info?.message || '';
+    }
   });
   showView('home');
 }

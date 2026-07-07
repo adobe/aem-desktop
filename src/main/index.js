@@ -28,8 +28,13 @@ import {
 import { ContentApiClient } from './content-api-client.js';
 import { HttpRequestError } from './http-request-error.js';
 import {
-  DA_TOKEN_FILENAME, clearStoredToken, getAuthStatus, getValidToken, logout,
+  DA_TOKEN_FILENAME, getAuthStatus, getValidToken, loadStoredToken,
 } from './da-auth.js';
+import {
+  describeTokenDiagnostics,
+  invalidateDaSession,
+  resolveStoredAccessToken,
+} from './da-session.js';
 import {
   isSiteTokenExpired,
   loadSiteTokens,
@@ -41,7 +46,7 @@ import {
   adminBaseForApiBackend,
   parsePreviewRef,
 } from './preview-login-url.js';
-import { openPreviewLogin } from './preview-login.js';
+import { openPreviewLogin, PREVIEW_LOGIN_PARTITION } from './preview-login.js';
 import {
   addSiteFromUrl, findSite, loadSites, removeSite, saveSites,
 } from './site-store.js';
@@ -51,6 +56,7 @@ import { parseDocumentHtml } from './document-view-html.js';
 import { diffDocumentHtml } from './document-view-diff.js';
 import {
   initContentDaLiveAuth,
+  PREVIEW_WEBVIEW_PARTITION,
 } from './content-da-live-auth.js';
 import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
 import { startPreviewServer } from './preview-server.js';
@@ -228,21 +234,71 @@ async function loginPreviewSite(site) {
   }
 }
 
-async function withContentClient(site, fn) {
-  const accessToken = await getValidToken({
+/**
+ * Removes every trace of the DA sign-in: token file, per-site preview tokens,
+ * in-memory caches, and IMS/DA cookies + storage in all Electron sessions.
+ */
+async function invalidateCurrentDaSession() {
+  await invalidateDaSession({
     tokenPath: tokenPath(),
-    openBrowser: (url) => shell.openExternal(url),
+    siteTokensPath: siteTokensPath(),
+    electronSession: session,
+    partitions: [PREVIEW_WEBVIEW_PARTITION, PREVIEW_LOGIN_PARTITION],
+    clearContentAuthCache: () => contentDaLiveAuth?.clearCache(),
+    clearPreviewCaches: () => previewRegistry?.clearHeadCache(),
+    resetSiteTokensCache: () => {
+      siteTokensCache = null;
+    },
   });
+}
+
+/**
+ * Enriches an unauthorized error with token diagnostics, wipes the now-known-
+ * bad session, and tells the renderer to fall back to the sign-in screen.
+ *
+ * @param {Error} err
+ * @param {{ org: string, repo: string }} site
+ * @param {string} backend
+ * @returns {Promise<Error>} the error to rethrow
+ */
+async function handleDaUnauthorized(err, site, backend) {
+  const stored = await loadStoredToken(tokenPath());
+  const diagnostics = describeTokenDiagnostics(stored);
+  log.scope('da-auth').warn(
+    `unauthorized for ${site.org}/${site.repo} via ${backend}: ${err.message} [${diagnostics}]`,
+  );
+
+  try {
+    await invalidateCurrentDaSession();
+  } catch (cleanupErr) {
+    log.scope('da-auth').warn(`session cleanup failed: ${cleanupErr.message}`);
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('da:session-expired', { message: err.message });
+  }
+
+  const detail = `${err.message}\n`
+    + `Site: ${site.org}/${site.repo} via ${backend}\n`
+    + `Token: ${diagnostics}\n`
+    + 'The stored sign-in was removed — use "Sign in to AEM" to start a fresh session.';
+  if (err instanceof HttpRequestError) {
+    return new HttpRequestError(detail, err);
+  }
+  return new Error(detail);
+}
+
+async function withContentClient(site, fn) {
   const backend = site.apiBackend || API_BACKEND_DA_LIVE;
   try {
+    // Never trigger a silent browser login from a background request: a
+    // missing/expired token throws an unauthorized error with the reason,
+    // and the renderer routes the user to the explicit Sign in button.
+    const accessToken = await resolveStoredAccessToken(tokenPath());
     return await fn(new ContentApiClient(accessToken, backend));
   } catch (err) {
     if (isDaUnauthorizedError(err)) {
-      await clearStoredToken(tokenPath());
-      contentDaLiveAuth?.clearCache();
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('da:session-expired');
-      }
+      throw await handleDaUnauthorized(err, site, backend);
     }
     throw err;
   }
@@ -374,8 +430,7 @@ ipcMain.handle('da:login', async () => {
 });
 
 ipcMain.handle('da:logout', async () => {
-  await logout(tokenPath());
-  contentDaLiveAuth?.clearCache();
+  await invalidateCurrentDaSession();
   return getAuthStatus(tokenPath());
 });
 
