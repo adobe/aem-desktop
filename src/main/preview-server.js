@@ -49,6 +49,11 @@ const SKIP_REQUEST_HEADERS = new Set([
   // EDS rejects that foreign origin with a 403, so strip it — the proxy stands in
   // for the .aem.page origin and presents requests as same-origin.
   'origin',
+  // Subresource requests carry the localhost proxy page as Referer. Chromium's
+  // network stack (net.fetch) kills requests whose Referer doesn't match the
+  // destination with net::ERR_BLOCKED_BY_CLIENT — and it leaks the local proxy
+  // origin upstream — so never forward it.
+  'referer',
 ]);
 
 const SKIP_RESPONSE_HEADERS = new Set([

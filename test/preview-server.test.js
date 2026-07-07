@@ -188,6 +188,35 @@ test('preview server strips localhost Origin before upstream fetch', async () =>
   }
 });
 
+test('preview server strips localhost Referer before upstream fetch', async () => {
+  let forwardedReferer;
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    getToken: async () => null,
+    fetchFn: async (_url, init) => {
+      forwardedReferer = init?.headers?.referer;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  try {
+    // Chromium's net.fetch rejects a Referer that doesn't match the upstream
+    // destination with net::ERR_BLOCKED_BY_CLIENT, so it must never forward.
+    await fetch(`${server.baseUrl}/styles/styles.css`, {
+      headers: { Referer: 'http://127.0.0.1:9999/some/page' },
+    });
+    assert.equal(forwardedReferer, undefined);
+  } finally {
+    await server.close();
+  }
+});
+
 test('preview server proxies to the site previewUrl origin (aem.page not aem.live)', async () => {
   let upstreamUrl;
   const site = {
