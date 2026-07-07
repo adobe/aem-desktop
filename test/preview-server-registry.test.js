@@ -25,15 +25,18 @@ test('previewUrlOrigin extracts origin from preview URL', () => {
 
 test('preview server registry assigns ports per upstream origin', async () => {
   let nextPort = 5000;
+  const customFetch = async () => new Response('');
 
   const registry = createPreviewServerRegistry({
-    startPreviewServer: async () => {
+    startPreviewServer: async (opts) => {
+      assert.equal(opts.fetchFn, customFetch, 'fetchFn should reach each preview server');
       nextPort += 1;
       return {
         baseUrl: `http://127.0.0.1:${nextPort}`,
         close: async () => {},
       };
     },
+    fetchFn: customFetch,
     createHeadHtmlCache: () => ({
       clear: () => {},
       resolve: async () => '',

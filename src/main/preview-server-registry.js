@@ -48,6 +48,7 @@ export function previewUrlOrigin(previewUrl) {
  *     previewUrl: string,
  *     apiBackend?: string,
  *   }|null>,
+ *   fetchFn?: typeof fetch,
  *   log?: import('electron-log').MainLogger,
  * }} deps
  */
@@ -96,6 +97,7 @@ export function createPreviewServerRegistry(deps) {
       getSyncFolder: deps.getSyncFolder,
       getToken: deps.getToken,
       onAuthRequired: deps.onAuthRequired,
+      fetchFn: deps.fetchFn,
     });
 
     const entry = {

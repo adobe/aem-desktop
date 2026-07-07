@@ -68,6 +68,46 @@ export function composeHttpErrorMessage({
   return messageParts.join(' — ');
 }
 
+const MAX_CAUSE_DEPTH = 5;
+
+/**
+ * Flattens an error's `cause` chain into one line. Node's fetch (undici)
+ * reports network failures as a bare "TypeError: fetch failed" with the
+ * actual reason (DNS, TLS, proxy, timeout) hidden in nested causes.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function describeErrorChain(err) {
+  const parts = [];
+  let current = err;
+  while (current && parts.length < MAX_CAUSE_DEPTH) {
+    const message = current instanceof Error ? current.message : String(current);
+    const { code } = /** @type {{ code?: string }} */ (current);
+    const part = code && !message.includes(code) ? `${message} (${code})` : message;
+    if (part && !parts.includes(part)) {
+      parts.push(part);
+    }
+    current = /** @type {{ cause?: unknown }} */ (current).cause;
+  }
+  return parts.join(' ← ') || 'unknown error';
+}
+
+/**
+ * Builds the error for a fetch that failed before any HTTP response arrived
+ * (DNS, TLS, proxy, offline), naming the request and the underlying cause.
+ *
+ * @param {string} method
+ * @param {string} url
+ * @param {unknown} err
+ * @returns {HttpRequestError}
+ */
+export function buildFetchFailureError(method, url, err) {
+  const message = `Network request failed: ${method} ${url} — ${describeErrorChain(err)}. `
+    + 'Check your network, VPN, or proxy connection.';
+  return new HttpRequestError(message, { method, url });
+}
+
 /**
  * @param {string} method
  * @param {string} url

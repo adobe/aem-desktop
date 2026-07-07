@@ -31,9 +31,27 @@ import {
   buildDaLiveSourceUrl,
   LIST_CONTINUATION_HEADER,
 } from './da-live-api.js';
-import { buildHttpError } from './http-request-error.js';
+import { buildFetchFailureError, buildHttpError } from './http-request-error.js';
 
 const LIST_MAX_PAGES = 50000;
+
+/**
+ * Wraps a fetch implementation so transport failures (DNS, TLS, proxy,
+ * offline) surface the request and underlying cause instead of a bare
+ * "TypeError: fetch failed".
+ *
+ * @param {typeof fetch} fetchImpl
+ * @returns {typeof fetch}
+ */
+function withNetworkErrorDetail(fetchImpl) {
+  return async (url, init) => {
+    try {
+      return await fetchImpl(url, init);
+    } catch (err) {
+      throw buildFetchFailureError(init?.method || 'GET', String(url), err);
+    }
+  };
+}
 
 /**
  * Builds a 401 error that keeps the {@link DA_UNAUTHORIZED_MESSAGE} prefix
@@ -61,7 +79,7 @@ export class ContentApiClient {
   constructor(token, backend = API_BACKEND_DA_LIVE, fetchImpl = globalThis.fetch) {
     this.token = token;
     this.backend = isValidApiBackend(backend) ? backend : API_BACKEND_DA_LIVE;
-    this.fetch = fetchImpl;
+    this.fetch = withNetworkErrorDetail(fetchImpl);
   }
 
   get authHeader() {

@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
-  app, BrowserWindow, dialog, ipcMain, session, shell,
+  app, BrowserWindow, dialog, ipcMain, net, session, shell,
 } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -288,6 +288,10 @@ async function handleDaUnauthorized(err, site, backend) {
   return new Error(detail);
 }
 
+// Chromium network stack (not Node's undici): honors the OS proxy/PAC
+// configuration and certificate store, which corporate networks require.
+const chromiumFetch = (url, init) => net.fetch(url, init);
+
 async function withContentClient(site, fn) {
   const backend = site.apiBackend || API_BACKEND_DA_LIVE;
   try {
@@ -295,7 +299,7 @@ async function withContentClient(site, fn) {
     // missing/expired token throws an unauthorized error with the reason,
     // and the renderer routes the user to the explicit Sign in button.
     const accessToken = await resolveStoredAccessToken(tokenPath());
-    return await fn(new ContentApiClient(accessToken, backend));
+    return await fn(new ContentApiClient(accessToken, backend, chromiumFetch));
   } catch (err) {
     if (isDaUnauthorizedError(err)) {
       throw await handleDaUnauthorized(err, site, backend);
@@ -996,6 +1000,7 @@ app.whenReady().then(async () => {
     getSyncFolder: () => loadSyncFolder(syncFolderStorePath()),
     resolveActiveSite: resolvePreviewSite,
     getToken: getSiteTokenFor,
+    fetchFn: chromiumFetch,
     onAuthRequired: (site) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('preview:auth-required', {

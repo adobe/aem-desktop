@@ -17,7 +17,11 @@ import {
   isDaUnauthorizedError,
 } from '../src/main/content-api-shared.js';
 import { ContentApiClient } from '../src/main/content-api-client.js';
-import { composeHttpErrorMessage, HttpRequestError } from '../src/main/http-request-error.js';
+import {
+  composeHttpErrorMessage,
+  describeErrorChain,
+  HttpRequestError,
+} from '../src/main/http-request-error.js';
 
 test('composeHttpErrorMessage includes x-error header', () => {
   const message = composeHttpErrorMessage({
@@ -31,6 +35,42 @@ test('composeHttpErrorMessage includes x-error header', () => {
   });
   assert.match(message, /x-error: Invalid path format/);
   assert.match(message, /400 Bad Request/);
+});
+
+test('describeErrorChain flattens nested fetch failure causes', () => {
+  const dns = Object.assign(new Error('getaddrinfo ENOTFOUND admin.da.live'), {
+    code: 'ENOTFOUND',
+  });
+  const fetchFailed = new TypeError('fetch failed', { cause: dns });
+
+  assert.equal(
+    describeErrorChain(fetchFailed),
+    'fetch failed ← getaddrinfo ENOTFOUND admin.da.live',
+  );
+  assert.equal(describeErrorChain(new Error('boom')), 'boom');
+  assert.equal(describeErrorChain(null), 'unknown error');
+});
+
+test('network failures name the request and underlying cause', async () => {
+  const dns = Object.assign(new Error('getaddrinfo ENOTFOUND admin.da.live'), {
+    code: 'ENOTFOUND',
+  });
+  const fetchImpl = async () => {
+    throw new TypeError('fetch failed', { cause: dns });
+  };
+  const client = new ContentApiClient('token', API_BACKEND_DA_LIVE, fetchImpl);
+
+  await assert.rejects(
+    () => client.list('org', 'site', '/'),
+    (err) => {
+      assert.ok(err instanceof HttpRequestError);
+      assert.match(err.message, /Network request failed: GET https:\/\/admin\.da\.live\/list\/org\/site\//);
+      assert.match(err.message, /getaddrinfo ENOTFOUND admin\.da\.live/);
+      assert.match(err.message, /network, VPN, or proxy/);
+      assert.ok(!isDaUnauthorizedError(err));
+      return true;
+    },
+  );
 });
 
 test('401 errors keep the unauthorized prefix and carry request detail', async () => {
