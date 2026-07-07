@@ -1,3 +1,10 @@
+## [1.6.3](https://github.com/adobe/aem-desktop/compare/v1.6.2...v1.6.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* use Chromium network stack for API requests and explain fetch failures ([6fc434e](https://github.com/adobe/aem-desktop/commit/6fc434e1f09612f09902eb1b5804d7912a5510de))
+
 ## [1.6.2](https://github.com/adobe/aem-desktop/compare/v1.6.1...v1.6.2) (2026-07-07)
 
 
