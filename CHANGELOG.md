@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/adobe/aem-desktop/compare/v1.6.1...v1.6.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* fully clear DA session on sign-out and enrich unauthorized errors ([fbb8f49](https://github.com/adobe/aem-desktop/commit/fbb8f4993f9ee4a5fffc3f3af21e4a077f738025))
+
 ## [1.6.1](https://github.com/adobe/aem-desktop/compare/v1.6.0...v1.6.1) (2026-07-06)
 
 
