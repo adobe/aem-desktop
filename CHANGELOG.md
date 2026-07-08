@@ -1,3 +1,13 @@
+## [1.6.4](https://github.com/adobe/aem-desktop/compare/v1.6.3...v1.6.4) (2026-07-08)
+
+
+### Bug Fixes
+
+* log network context (connectivity, resolved proxy) on fetch failures ([0956c28](https://github.com/adobe/aem-desktop/commit/0956c282368d8dd3b9b79e5937b453377b1638ff))
+* log the full preview proxy request cycle for diagnosis ([a8f7e11](https://github.com/adobe/aem-desktop/commit/a8f7e119f30dd9aceb32353fe828f00d473fed99))
+* strip Referer before upstream preview fetch (ERR_BLOCKED_BY_CLIENT) ([cee0cc0](https://github.com/adobe/aem-desktop/commit/cee0cc0886120f96c06046414b9fd9c32c838b85))
+* strip sec-fetch-* headers before upstream preview fetch ([219090f](https://github.com/adobe/aem-desktop/commit/219090f48e366ac12fab58acb155e42c838eb06d))
+
 ## [1.6.3](https://github.com/adobe/aem-desktop/compare/v1.6.2...v1.6.3) (2026-07-07)
 
 
