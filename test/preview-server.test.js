@@ -217,6 +217,43 @@ test('preview server strips localhost Referer before upstream fetch', async () =
   }
 });
 
+test('preview server strips sec-fetch-* headers before upstream fetch', async () => {
+  /** @type {Record<string, string>|undefined} */
+  let forwardedHeaders;
+  const site = {
+    org: 'org',
+    repo: 'id',
+    previewUrl: 'https://main--id--org.aem.page',
+  };
+  const server = await startPreviewServer({
+    getActiveSite: async () => site,
+    getSyncFolder: async () => null,
+    getToken: async () => null,
+    fetchFn: async (_url, init) => {
+      forwardedHeaders = init?.headers;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  try {
+    // Chromium's net.fetch rejects a forwarded `sec-fetch-mode: cors` with
+    // net::ERR_INVALID_ARGUMENT, so the webview's fetch metadata must stay out.
+    await fetch(`${server.baseUrl}/scripts/aem.js`, {
+      headers: {
+        'Sec-Fetch-Dest': 'script',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        Accept: '*/*',
+      },
+    });
+    const forwardedNames = Object.keys(forwardedHeaders || {}).map((n) => n.toLowerCase());
+    assert.ok(!forwardedNames.some((n) => n.startsWith('sec-fetch-')));
+    assert.ok(forwardedNames.includes('accept'));
+  } finally {
+    await server.close();
+  }
+});
+
 test('preview server proxies to the site previewUrl origin (aem.page not aem.live)', async () => {
   let upstreamUrl;
   const site = {

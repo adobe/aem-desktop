@@ -56,6 +56,20 @@ const SKIP_REQUEST_HEADERS = new Set([
   'referer',
 ]);
 
+/**
+ * Never forward a header the browser manages itself. Besides the fixed skip
+ * list, sec-fetch-* describes the webview's fetch context, not the proxy's:
+ * Chromium rejects a net.fetch carrying `sec-fetch-mode: cors` with
+ * net::ERR_INVALID_ARGUMENT (module scripts break, stylesheets survive) and
+ * sets its own sec-fetch-* on the upstream request anyway.
+ *
+ * @param {string} name lower-cased header name
+ * @returns {boolean}
+ */
+function shouldSkipRequestHeader(name) {
+  return SKIP_REQUEST_HEADERS.has(name) || name.startsWith('sec-fetch-');
+}
+
 const SKIP_RESPONSE_HEADERS = new Set([
   'connection',
   'content-encoding',
@@ -135,7 +149,7 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
   const names = Object.keys(req.headers);
   for (let i = 0; i < names.length; i += 1) {
     const name = names[i];
-    if (!SKIP_REQUEST_HEADERS.has(name.toLowerCase())) {
+    if (!shouldSkipRequestHeader(name.toLowerCase())) {
       reqHeaders[name] = /** @type {string} */ (req.headers[name]);
     }
   }
