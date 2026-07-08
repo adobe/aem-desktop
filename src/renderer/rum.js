@@ -18,14 +18,28 @@ const RUM_STANDALONE_PATH = '/.rum/@adobe/helix-rum-js@^2/dist/rum-standalone.js
  * behave like a normal page load; virtual pageviews call {@link trackDesktopPageView}.
  *
  * @param {() => Promise<string|null|undefined>} getBaseUrl
+ * @param {() => Promise<boolean>} [isDev]
  */
-export async function initDesktopRum(getBaseUrl) {
+export async function initDesktopRum(getBaseUrl, isDev = async () => false) {
   const baseUrl = await getBaseUrl();
   if (!baseUrl) {
     return;
   }
 
   window.RUM_BASE = baseUrl.replace(/\/+$/, '');
+
+  // file:// shell has no query string; force sampling in dev or via localStorage.
+  try {
+    const force = localStorage.getItem('rum') || localStorage.getItem('optel');
+    if (force === 'on') {
+      window.SAMPLE_PAGEVIEWS_AT_RATE = 'on';
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  if (!window.SAMPLE_PAGEVIEWS_AT_RATE && await isDev()) {
+    window.SAMPLE_PAGEVIEWS_AT_RATE = 'on';
+  }
 
   await new Promise((resolve, reject) => {
     const script = document.createElement('script');

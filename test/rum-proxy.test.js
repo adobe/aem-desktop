@@ -83,7 +83,7 @@ test('rum proxy forwards GET script requests to rum.hlx.page', async () => {
   }
 });
 
-test('rum proxy rewrites beacon referer and forwards upstream Referer header', async () => {
+test('rum proxy rewrites beacon referer in JSON body but not HTTP Referer header', async () => {
   /** @type {Record<string, string>|undefined} */
   let forwardedHeaders;
   /** @type {string|undefined} */
@@ -110,7 +110,7 @@ test('rum proxy rewrites beacon referer and forwards upstream Referer header', a
       }),
     });
     assert.equal(resp.status, 201);
-    assert.equal(forwardedHeaders?.referer, cooperativeReferer);
+    assert.equal(forwardedHeaders?.referer, undefined);
     assert.equal(JSON.parse(forwardedBody || '{}').referer, cooperativeReferer);
 
     const clickResp = await fetch(`${proxy.baseUrl}/.rum/100`, {
@@ -125,7 +125,7 @@ test('rum proxy rewrites beacon referer and forwards upstream Referer header', a
       }),
     });
     assert.equal(clickResp.status, 201);
-    assert.equal(forwardedHeaders?.referer, cooperativeReferer);
+    assert.equal(forwardedHeaders?.referer, undefined);
     assert.equal(JSON.parse(forwardedBody || '{}').referer, cooperativeReferer);
   } finally {
     await proxy.close();

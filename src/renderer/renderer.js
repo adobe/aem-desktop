@@ -2930,7 +2930,10 @@ async function loadSyncFolderPreference() {
 async function init() {
   wireUi();
   state.icons = await loadIcons();
-  await initDesktopRum(() => window.aemDesktop.getRumBaseUrl());
+  await initDesktopRum(
+    () => window.aemDesktop.getRumBaseUrl(),
+    () => window.aemDesktop.isDev(),
+  );
   await loadSyncFolderPreference();
   updateBrowseCodeAvailability();
   syncReviewContentView();

@@ -159,7 +159,9 @@ export async function startRumProxy({ fetchFn = fetch, log } = {}) {
         const rewritten = rewriteRumBeaconBody(raw.toString('utf8'), lastDesktopReferer);
         body = rewritten.body;
         lastDesktopReferer = rewritten.referer;
-        reqHeaders.referer = rewritten.referer;
+        // Site identity lives in the JSON payload. Do not forward an HTTP Referer
+        // to rum.hlx.page — Chromium net.fetch rejects cross-origin referers with
+        // ERR_BLOCKED_BY_CLIENT (same constraint as the preview proxy).
         reqHeaders['content-type'] = req.headers['content-type'] || 'application/json';
         reqHeaders['content-length'] = String(Buffer.byteLength(body));
       }
