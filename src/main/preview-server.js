@@ -49,7 +49,26 @@ const SKIP_REQUEST_HEADERS = new Set([
   // EDS rejects that foreign origin with a 403, so strip it — the proxy stands in
   // for the .aem.page origin and presents requests as same-origin.
   'origin',
+  // Subresource requests carry the localhost proxy page as Referer. Chromium's
+  // network stack (net.fetch) kills requests whose Referer doesn't match the
+  // destination with net::ERR_BLOCKED_BY_CLIENT — and it leaks the local proxy
+  // origin upstream — so never forward it.
+  'referer',
 ]);
+
+/**
+ * Never forward a header the browser manages itself. Besides the fixed skip
+ * list, sec-fetch-* describes the webview's fetch context, not the proxy's:
+ * Chromium rejects a net.fetch carrying `sec-fetch-mode: cors` with
+ * net::ERR_INVALID_ARGUMENT (module scripts break, stylesheets survive) and
+ * sets its own sec-fetch-* on the upstream request anyway.
+ *
+ * @param {string} name lower-cased header name
+ * @returns {boolean}
+ */
+function shouldSkipRequestHeader(name) {
+  return SKIP_REQUEST_HEADERS.has(name) || name.startsWith('sec-fetch-');
+}
 
 const SKIP_RESPONSE_HEADERS = new Set([
   'connection',
@@ -111,7 +130,17 @@ function createAuthenticatedFetch(siteToken, fetchFn = fetch) {
  * @param {string|null|undefined} siteToken
  * @param {typeof fetch} fetchFn
  */
-async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn) {
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} upstreamUrl
+ * @param {string} proxyHost
+ * @param {string|null|undefined} siteToken
+ * @param {typeof fetch} fetchFn
+ * @param {ReturnType<typeof previewLogger>} scope
+ * @returns {Promise<Response>} the upstream response (headers already sent)
+ */
+async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchFn, scope) {
   /** @type {Record<string, string>} */
   const reqHeaders = {
     'x-forwarded-host': proxyHost,
@@ -120,7 +149,7 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
   const names = Object.keys(req.headers);
   for (let i = 0; i < names.length; i += 1) {
     const name = names[i];
-    if (!SKIP_REQUEST_HEADERS.has(name.toLowerCase())) {
+    if (!shouldSkipRequestHeader(name.toLowerCase())) {
       reqHeaders[name] = /** @type {string} */ (req.headers[name]);
     }
   }
@@ -147,17 +176,18 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
 
   res.writeHead(upstream.status, respHeaders);
 
-  if (req.method === 'HEAD') {
+  if (req.method === 'HEAD' || !upstream.body) {
     res.end();
-    return;
+    return upstream;
   }
 
-  if (!upstream.body) {
-    res.end();
-    return;
-  }
-
-  Readable.fromWeb(upstream.body).pipe(res);
+  const bodyStream = Readable.fromWeb(upstream.body);
+  bodyStream.on('error', (err) => {
+    scope.error(`upstream body stream failed for ${upstreamUrl}: ${err.message}`);
+    res.destroy(err);
+  });
+  bodyStream.pipe(res);
+  return upstream;
 }
 
 /**
@@ -187,16 +217,18 @@ function upstreamStatusNeedsAuth(status, siteToken) {
  * @param {string} upstreamUrl
  * @param {string|null|undefined} siteToken
  * @param {typeof fetch} fetchFn
+ * @param {ReturnType<typeof previewLogger>} scope
  * @returns {Promise<boolean>}
  */
-async function upstreamRequiresAuth(upstreamUrl, siteToken, fetchFn) {
+async function upstreamRequiresAuth(upstreamUrl, siteToken, fetchFn, scope) {
   if (siteToken) {
     return false;
   }
   try {
     const resp = await fetchFn(upstreamUrl, { method: 'HEAD', redirect: 'follow' });
     return upstreamStatusNeedsAuth(resp.status, siteToken);
-  } catch {
+  } catch (err) {
+    scope.warn(`auth probe HEAD ${upstreamUrl} failed: ${err.message}`);
     return false;
   }
 }
@@ -266,21 +298,30 @@ export async function startPreviewServer(deps) {
   const fetchFn = deps.fetchFn || fetch;
 
   const server = createServer(async (req, res) => {
+    const startedAt = Date.now();
+    const elapsed = () => `${Date.now() - startedAt}ms`;
+
     if (!req.url) {
+      scope.warn('400 — request without URL');
       sendText(res, 400, 'Bad request');
       return;
     }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
+      scope.warn(`405 — ${req.method} ${req.url}`);
       sendText(res, 405, 'Method not allowed');
       return;
     }
+
+    // One line per request start so hung requests are visible in the log.
+    scope.info(`→ ${req.method} ${req.url} [dest: ${req.headers['sec-fetch-dest'] || '?'}]`);
 
     const requestUrl = new URL(req.url, 'http://127.0.0.1');
     const previewPath = pathnameToPreviewPath(requestUrl.pathname);
 
     const site = await deps.getActiveSite();
     if (!site) {
+      scope.warn(`503 — no active site for ${req.method} ${req.url} (site switched or not activated?)`);
       sendText(res, 503, 'No active site for preview');
       return;
     }
@@ -293,6 +334,7 @@ export async function startPreviewServer(deps) {
     );
 
     const token = deps.getToken ? await deps.getToken(site) : null;
+    const tokenNote = token ? 'site token' : 'no site token';
     const authFetch = createAuthenticatedFetch(token, fetchFn);
 
     const syncFolder = await deps.getSyncFolder();
@@ -301,7 +343,7 @@ export async function startPreviewServer(deps) {
       const localFile = await resolveLocalContentFile(localRoot, previewPath);
       const authBlocked = localFile
         && isMainFrameDocumentRequest(req)
-        && await upstreamRequiresAuth(upstreamUrl, token, fetchFn);
+        && await upstreamRequiresAuth(upstreamUrl, token, fetchFn, scope);
       if (localFile && !authBlocked) {
         try {
           const headHtml = await headHtmlCache.resolve({
@@ -326,23 +368,32 @@ export async function startPreviewServer(deps) {
             'content-type': contentType,
             'access-control-allow-origin': '*',
           }, req.method === 'HEAD' ? '' : body);
-          scope.info(`local ${localFile.relativePath} -> 200 ${pathWithQuery}`);
+          scope.info(`local ${localFile.relativePath} -> 200 ${pathWithQuery} (${contentType}, ${elapsed()})`);
           return;
         } catch (err) {
-          scope.warn(`failed to read local file ${localFile.filePath}: ${err.message}`);
+          scope.warn(`failed to render local file ${localFile.filePath}: ${err.message} — falling back to upstream`);
         }
       } else if (authBlocked) {
         scope.info(`local ${localFile.relativePath} blocked — upstream requires auth`);
       }
+    } else {
+      scope.debug(`no sync folder configured — proxying ${pathWithQuery} upstream`);
     }
 
     const proxyHost = req.headers.host || requestUrl.host;
     try {
-      await proxyUpstream(req, res, upstreamUrl, proxyHost, token, fetchFn);
-      scope.info(`proxy ${pathWithQuery} -> ${upstreamUrl} (${res.statusCode})`);
+      const upstream = await proxyUpstream(req, res, upstreamUrl, proxyHost, token, fetchFn, scope);
+      const contentType = upstream.headers.get('content-type') || 'no content-type';
+      const logLine = `proxy ${pathWithQuery} -> ${upstreamUrl} `
+        + `(${upstream.status}, ${contentType}, ${tokenNote}, ${elapsed()})`;
+      if (upstream.status >= 400) {
+        scope.warn(logLine);
+      } else {
+        scope.info(logLine);
+      }
       maybeNotifyAuthRequired(site, req, res.statusCode, token, deps.onAuthRequired);
     } catch (err) {
-      scope.error(`proxy failed for ${upstreamUrl}: ${err.message}`);
+      scope.error(`proxy failed for ${upstreamUrl} (${tokenNote}, ${elapsed()}): ${err.message}`);
       if (!res.headersSent) {
         sendText(res, 502, `Failed to proxy AEM request: ${err.message}`);
       }

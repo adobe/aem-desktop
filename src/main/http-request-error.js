@@ -96,14 +96,18 @@ export function describeErrorChain(err) {
 /**
  * Builds the error for a fetch that failed before any HTTP response arrived
  * (DNS, TLS, proxy, offline), naming the request and the underlying cause.
+ * `networkContext` (connectivity, resolved proxy, versions) is appended so a
+ * screenshot of the on-screen error is enough to diagnose proxy/VPN issues.
  *
  * @param {string} method
  * @param {string} url
  * @param {unknown} err
+ * @param {string} [networkContext]
  * @returns {HttpRequestError}
  */
-export function buildFetchFailureError(method, url, err) {
-  const message = `Network request failed: ${method} ${url} — ${describeErrorChain(err)}. `
+export function buildFetchFailureError(method, url, err, networkContext = '') {
+  const contextPart = networkContext ? ` [${networkContext}]` : '';
+  const message = `Network request failed: ${method} ${url} — ${describeErrorChain(err)}${contextPart}. `
     + 'Check your network, VPN, or proxy connection.';
   return new HttpRequestError(message, { method, url });
 }

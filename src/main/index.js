@@ -26,7 +26,7 @@ import {
   isDaUnauthorizedError,
 } from './content-api-shared.js';
 import { ContentApiClient } from './content-api-client.js';
-import { HttpRequestError } from './http-request-error.js';
+import { buildFetchFailureError, HttpRequestError } from './http-request-error.js';
 import {
   DA_TOKEN_FILENAME, getAuthStatus, getValidToken, loadStoredToken,
 } from './da-auth.js';
@@ -288,9 +288,46 @@ async function handleDaUnauthorized(err, site, backend) {
   return new Error(detail);
 }
 
+/**
+ * Gathers network-stack context for a failed request: connectivity, the
+ * proxy Chromium resolved for this URL, and versions. Appended to the
+ * on-screen error and the log so a user's screenshot or log file is enough
+ * to tell DNS, proxy, VPN, and TLS problems apart.
+ *
+ * @param {string} url
+ * @returns {Promise<string>}
+ */
+async function describeNetworkContext(url) {
+  const parts = [];
+  try {
+    parts.push(net.isOnline() ? 'online' : 'no network connection');
+  } catch {
+    parts.push('connectivity unknown');
+  }
+  try {
+    const proxy = await session.defaultSession.resolveProxy(url);
+    parts.push(`proxy: ${proxy || 'unknown'}`);
+  } catch (err) {
+    parts.push(`proxy lookup failed: ${err.message}`);
+  }
+  parts.push(`app ${app.getVersion()}, electron ${process.versions.electron}`);
+  return parts.join('; ');
+}
+
 // Chromium network stack (not Node's undici): honors the OS proxy/PAC
 // configuration and certificate store, which corporate networks require.
-const chromiumFetch = (url, init) => net.fetch(url, init);
+// Failures are logged and enriched with network context before rethrowing.
+const chromiumFetch = async (url, init) => {
+  try {
+    return await net.fetch(url, init);
+  } catch (err) {
+    const method = init?.method || 'GET';
+    const context = await describeNetworkContext(String(url));
+    const failure = buildFetchFailureError(method, String(url), err, context);
+    log.scope('net').error(failure.message);
+    throw failure;
+  }
+};
 
 async function withContentClient(site, fn) {
   const backend = site.apiBackend || API_BACKEND_DA_LIVE;

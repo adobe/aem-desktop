@@ -31,7 +31,11 @@ import {
   buildDaLiveSourceUrl,
   LIST_CONTINUATION_HEADER,
 } from './da-live-api.js';
-import { buildFetchFailureError, buildHttpError } from './http-request-error.js';
+import {
+  buildFetchFailureError,
+  buildHttpError,
+  HttpRequestError,
+} from './http-request-error.js';
 
 const LIST_MAX_PAGES = 50000;
 
@@ -48,6 +52,10 @@ function withNetworkErrorDetail(fetchImpl) {
     try {
       return await fetchImpl(url, init);
     } catch (err) {
+      // Already enriched by the injected fetch (e.g. with proxy context).
+      if (err instanceof HttpRequestError) {
+        throw err;
+      }
       throw buildFetchFailureError(init?.method || 'GET', String(url), err);
     }
   };

@@ -18,6 +18,7 @@ import {
 } from '../src/main/content-api-shared.js';
 import { ContentApiClient } from '../src/main/content-api-client.js';
 import {
+  buildFetchFailureError,
   composeHttpErrorMessage,
   describeErrorChain,
   HttpRequestError,
@@ -68,6 +69,45 @@ test('network failures name the request and underlying cause', async () => {
       assert.match(err.message, /getaddrinfo ENOTFOUND admin\.da\.live/);
       assert.match(err.message, /network, VPN, or proxy/);
       assert.ok(!isDaUnauthorizedError(err));
+      return true;
+    },
+  );
+});
+
+test('buildFetchFailureError appends network context when provided', () => {
+  const err = buildFetchFailureError(
+    'GET',
+    'https://admin.da.live/list/org/site/',
+    new Error('net::ERR_PROXY_CONNECTION_FAILED'),
+    'online; proxy: PROXY proxy.example.com:8080; app 1.6.2, electron 33.0.0',
+  );
+
+  assert.match(err.message, /net::ERR_PROXY_CONNECTION_FAILED/);
+  assert.match(err.message, /\[online; proxy: PROXY proxy\.example\.com:8080; app 1\.6\.2, electron 33\.0\.0\]/);
+  assert.match(err.message, /network, VPN, or proxy/);
+});
+
+test('pre-enriched network errors from the injected fetch are not re-wrapped', async () => {
+  const enriched = buildFetchFailureError(
+    'GET',
+    'https://admin.da.live/list/org/site/',
+    new Error('net::ERR_NAME_NOT_RESOLVED'),
+    'no network connection; proxy: DIRECT',
+  );
+  const fetchImpl = async () => {
+    throw enriched;
+  };
+  const client = new ContentApiClient('token', API_BACKEND_DA_LIVE, fetchImpl);
+
+  await assert.rejects(
+    () => client.list('org', 'site', '/'),
+    (err) => {
+      assert.equal(err, enriched);
+      assert.equal(
+        (err.message.match(/Network request failed/g) || []).length,
+        1,
+        'context must not be wrapped twice',
+      );
       return true;
     },
   );
