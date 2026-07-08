@@ -70,6 +70,7 @@ import {
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
 } from './da-sync.js';
 import { runHelix6BulkWorkflow } from './helix6-bulk.js';
+import { startRumProxy } from './rum-proxy.js';
 import log from './logger.js';
 
 // Use the basic (plaintext) Chromium password store instead of the macOS
@@ -89,6 +90,8 @@ let mainWindow;
 let sitesCache = [];
 /** @type {ReturnType<typeof createPreviewServerRegistry>|null} */
 let previewRegistry = null;
+/** @type {{ baseUrl: string, close: () => Promise<void> }|null} */
+let rumProxy = null;
 /** @type {{ clearCache: () => void }|null} */
 let contentDaLiveAuth = null;
 
@@ -371,6 +374,8 @@ async function createWindow() {
 }
 
 ipcMain.handle('app:get-version', () => app.getVersion());
+
+ipcMain.handle('rum:get-base-url', () => rumProxy?.baseUrl ?? null);
 
 ipcMain.handle('app:is-dev', () => !app.isPackaged);
 
@@ -1030,6 +1035,8 @@ ipcMain.handle('dev:capture-screenshot', async (event) => {
 app.whenReady().then(async () => {
   contentDaLiveAuth = initContentDaLiveAuth(tokenPath(), session);
 
+  rumProxy = await startRumProxy({ fetchFn: chromiumFetch, log });
+
   previewRegistry = createPreviewServerRegistry({
     startPreviewServer,
     createHeadHtmlCache,
@@ -1059,6 +1066,7 @@ app.whenReady().then(async () => {
 
   app.on('will-quit', () => {
     previewRegistry?.closeAll().catch(() => {});
+    rumProxy?.close().catch(() => {});
   });
 });
 

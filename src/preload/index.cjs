@@ -16,6 +16,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('aemDesktop', {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
+  getRumBaseUrl: () => ipcRenderer.invoke('rum:get-base-url'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   showErrorDialog: (options) => ipcRenderer.invoke('app:show-error-dialog', options),
   captureScreenshot: () => ipcRenderer.invoke('dev:capture-screenshot'),
