@@ -476,7 +476,10 @@ async function fetchRemoteMetaForPaths(client, org, repo, daPaths, signal) {
  * @returns {Promise<{
  *   outdated: string[],
  *   conflicts: string[],
+ *   deletedRemotely: string[],
+ *   deletedConflicts: string[],
  *   files: Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>,
+ *   deletions: Array<{ daPath: string, conflict: boolean }>,
  * }>}
  */
 export async function evaluatePullStatus({
@@ -484,12 +487,26 @@ export async function evaluatePullStatus({
 }) {
   const outdated = [];
   const conflicts = [];
+  const deletedRemotely = [];
+  const deletedConflicts = [];
   /** @type {Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>} */
   const files = [];
+  /** @type {Array<{ daPath: string, conflict: boolean }>} */
+  const deletions = [];
 
   for (const prev of manifestFiles) {
     const remote = remoteMeta.get(prev.daPath);
     if (!remote) {
+      const { workingPath, originalPath } = syncPaths(destRoot, org, repo, prev.daPath);
+      const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+      const workBuf = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
+      const localModified = origBuf && workBuf && !origBuf.equals(workBuf);
+      deletions.push({ daPath: prev.daPath, conflict: localModified });
+      if (localModified) {
+        deletedConflicts.push(prev.daPath);
+      } else {
+        deletedRemotely.push(prev.daPath);
+      }
       continue; // eslint-disable-line no-continue
     }
 
@@ -522,7 +539,9 @@ export async function evaluatePullStatus({
     }
   }
 
-  return { outdated, conflicts, files };
+  return {
+    outdated, conflicts, deletedRemotely, deletedConflicts, files, deletions,
+  };
 }
 
 /**
@@ -548,8 +567,13 @@ export async function checkPullStatus({
     return {
       outdated: [],
       conflicts: [],
+      deletedRemotely: [],
+      deletedConflicts: [],
+      deletions: [],
       outdatedCount: 0,
       conflictCount: 0,
+      deletedRemotelyCount: 0,
+      deletedConflictsCount: 0,
       totalCount: 0,
       files: [],
     };
@@ -560,8 +584,13 @@ export async function checkPullStatus({
     return {
       outdated: [],
       conflicts: [],
+      deletedRemotely: [],
+      deletedConflicts: [],
+      deletions: [],
       outdatedCount: 0,
       conflictCount: 0,
+      deletedRemotelyCount: 0,
+      deletedConflictsCount: 0,
       totalCount: 0,
       files: [],
     };
@@ -576,8 +605,13 @@ export async function checkPullStatus({
     return {
       outdated: [],
       conflicts: [],
+      deletedRemotely: [],
+      deletedConflicts: [],
+      deletions: [],
       outdatedCount: 0,
       conflictCount: 0,
+      deletedRemotelyCount: 0,
+      deletedConflictsCount: 0,
       totalCount: 0,
       files: [],
     };
@@ -598,7 +632,9 @@ export async function checkPullStatus({
     ...result,
     outdatedCount: result.outdated.length,
     conflictCount: result.conflicts.length,
-    totalCount: result.files.length,
+    deletedRemotelyCount: result.deletedRemotely.length,
+    deletedConflictsCount: result.deletedConflicts.length,
+    totalCount: result.files.length + result.deletions.length,
   };
 }
 
@@ -880,14 +916,15 @@ export async function runSync({
  *   repo: string,
  *   destRoot: string,
  *   files: Array<{ daPath: string, lastModified?: string, ext?: string }>,
+ *   deletions?: string[],
  *   onProgress: (data: object) => void,
  *   signal?: AbortSignal,
  * }} options
  */
 export async function runPull({
-  client, org, repo, destRoot, files, onProgress, signal,
+  client, org, repo, destRoot, files, deletions = [], onProgress, signal,
 }) {
-  const total = files.length;
+  const total = files.length + deletions.length;
   onProgress({
     phase: 'downloading', completed: 0, total, current: '',
   });
@@ -905,7 +942,7 @@ export async function runPull({
   const newEntries = [];
   const downloadedPaths = new Set();
 
-  for (let i = 0; i < total; i += CONCURRENCY) {
+  for (let i = 0; i < files.length; i += CONCURRENCY) {
     if (signal?.aborted) {
       throw new Error('Pull cancelled');
     }
@@ -929,9 +966,30 @@ export async function runPull({
     });
   }
 
+  const deletedSet = new Set(deletions);
+  for (let i = 0; i < deletions.length; i += CONCURRENCY) {
+    if (signal?.aborted) {
+      throw new Error('Pull cancelled');
+    }
+
+    const batch = deletions.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(async (daPath) => { // eslint-disable-line no-await-in-loop
+      const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
+      await rm(workingPath, { force: true });
+      await rm(originalPath, { force: true });
+      prevManifestMap.delete(daPath);
+    }));
+
+    completed += batch.length;
+    const last = batch[batch.length - 1];
+    onProgress({
+      phase: 'deleting', completed, total, current: last,
+    });
+  }
+
   const manifestFiles = [];
   for (const [p, entry] of prevManifestMap) {
-    if (!downloadedPaths.has(p)) {
+    if (!downloadedPaths.has(p) && !deletedSet.has(p)) {
       manifestFiles.push(entry);
     }
   }
@@ -952,7 +1010,7 @@ export async function runPull({
     phase: 'done', completed: total, total, current: '',
   });
 
-  return { pulled: newEntries.length };
+  return { pulled: newEntries.length, deleted: deletions.length };
 }
 
 /**

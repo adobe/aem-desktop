@@ -783,7 +783,7 @@ ipcMain.handle('pull:check', async (event, {
 });
 
 ipcMain.handle('pull:run', async (event, {
-  siteId, destFolder, files,
+  siteId, destFolder, files, deletions,
 }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -801,6 +801,7 @@ ipcMain.handle('pull:run', async (event, {
       repo: site.repo,
       destRoot: destFolder,
       files,
+      deletions,
       signal,
       onProgress: (data) => {
         if (!event.sender.isDestroyed()) {
@@ -1035,7 +1036,9 @@ ipcMain.handle('dev:capture-screenshot', async (event) => {
 app.whenReady().then(async () => {
   contentDaLiveAuth = initContentDaLiveAuth(tokenPath(), session);
 
-  rumProxy = await startRumProxy({ fetchFn: chromiumFetch, log });
+  // RUM-only localhost proxy (Node https → rum.hlx.page). Preview, DA, and IMS
+  // traffic keep using chromiumFetch above; this server only accepts /.rum/*.
+  rumProxy = await startRumProxy({ log });
 
   previewRegistry = createPreviewServerRegistry({
     startPreviewServer,
