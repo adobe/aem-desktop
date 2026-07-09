@@ -1,3 +1,15 @@
+# [1.7.0](https://github.com/adobe/aem-desktop/compare/v1.6.4...v1.7.0) (2026-07-09)
+
+
+### Bug Fixes
+
+* stop forwarding desktop Referer header on RUM proxy upstream ([c256610](https://github.com/adobe/aem-desktop/commit/c25661087789fed33570196f5f106166dc0916ff))
+
+
+### Features
+
+* instrument desktop shell with cooperative AEM RUM ([d4547a4](https://github.com/adobe/aem-desktop/commit/d4547a4710d733c3946d839f409caa0e928956cf))
+
 ## [1.6.4](https://github.com/adobe/aem-desktop/compare/v1.6.3...v1.6.4) (2026-07-08)
 
 
