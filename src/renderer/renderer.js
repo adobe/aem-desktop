@@ -111,6 +111,8 @@ const els = {
   pullFolderPath: document.getElementById('pull-folder-path'),
   pullIncludeBinaries: document.getElementById('pull-include-binaries'),
   pullEmptyNotice: document.getElementById('pull-empty-notice'),
+  pullDeletedSection: document.getElementById('pull-deleted-section'),
+  pullDeletedList: document.getElementById('pull-deleted-list'),
   pullFileSection: document.getElementById('pull-file-section'),
   pullFileList: document.getElementById('pull-file-list'),
   pullConflictWarning: document.getElementById('pull-conflict-warning'),
@@ -1598,6 +1600,8 @@ let pullOutdated = [];
 let pullConflicts = [];
 /** @type {Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>} */
 let pullFiles = [];
+/** @type {Array<{ daPath: string, conflict: boolean }>} */
+let pullDeletions = [];
 let pullTotalCount = 0;
 let removePullProgressListener = null;
 let removePullCheckProgressListener = null;
@@ -1606,12 +1610,15 @@ function resetPullModalState() {
   pullOutdated = [];
   pullConflicts = [];
   pullFiles = [];
+  pullDeletions = [];
   pullTotalCount = 0;
   hide(els.pullProgress);
   hide(els.pullEmptyNotice);
+  hide(els.pullDeletedSection);
   hide(els.pullFileSection);
   hide(els.pullConflictWarning);
   els.pullOverwriteConflicts.checked = false;
+  els.pullDeletedList.replaceChildren();
   els.pullFileList.replaceChildren();
   els.pullConflictList.replaceChildren();
   els.pullProgressFill.style.width = '0%';
@@ -1643,18 +1650,28 @@ function updatePullStartEnabled() {
   const pullableCount = pullFiles.filter((file) => (
     !file.conflict || overwriteConflicts
   )).length;
-  els.pullStart.disabled = pullableCount === 0;
+  const deletableCount = pullDeletions.filter((entry) => (
+    !entry.conflict || overwriteConflicts
+  )).length;
+  els.pullStart.disabled = pullableCount + deletableCount === 0;
 }
 
 function renderPullStatus(status) {
   pullOutdated = status.outdated || [];
   pullConflicts = status.conflicts || [];
   pullFiles = status.files || [];
+  pullDeletions = status.deletions || [];
   pullTotalCount = status.totalCount || 0;
+
+  const deletedRemotely = status.deletedRemotely || [];
+  const deletedConflicts = status.deletedConflicts || [];
+  const hasUpdates = pullFiles.length > 0;
+  const hasDeletions = pullDeletions.length > 0;
 
   if (pullTotalCount === 0) {
     els.pullSummary.textContent = 'Checking complete';
     show(els.pullEmptyNotice);
+    hide(els.pullDeletedSection);
     hide(els.pullFileSection);
     hide(els.pullConflictWarning);
   } else {
@@ -1662,17 +1679,36 @@ function renderPullStatus(status) {
     if (pullOutdated.length > 0) {
       parts.push(`${pluralFiles(pullOutdated.length)} updated remotely`);
     }
-    if (pullConflicts.length > 0) {
-      parts.push(`${pluralFiles(pullConflicts.length)} changed locally and remotely`);
+    if (deletedRemotely.length > 0) {
+      parts.push(`${pluralFiles(deletedRemotely.length)} deleted remotely`);
+    }
+    if (pullConflicts.length > 0 || deletedConflicts.length > 0) {
+      const conflictCount = pullConflicts.length + deletedConflicts.length;
+      parts.push(`${pluralFiles(conflictCount)} changed locally and remotely`);
     }
     els.pullSummary.textContent = parts.join(', ');
     hide(els.pullEmptyNotice);
-    show(els.pullFileSection);
-    renderSyncPathList(els.pullFileList, pullFiles.map((f) => f.daPath));
 
-    if (pullConflicts.length > 0) {
-      els.pullConflictText.textContent = `${pluralFiles(pullConflicts.length)} changed both locally and remotely — skipped unless you choose to overwrite.`;
-      renderSyncPathList(els.pullConflictList, pullConflicts);
+    if (hasDeletions) {
+      show(els.pullDeletedSection);
+      renderSyncPathList(els.pullDeletedList, pullDeletions.map((entry) => entry.daPath));
+    } else {
+      hide(els.pullDeletedSection);
+      els.pullDeletedList.replaceChildren();
+    }
+
+    if (hasUpdates) {
+      show(els.pullFileSection);
+      renderSyncPathList(els.pullFileList, pullFiles.map((f) => f.daPath));
+    } else {
+      hide(els.pullFileSection);
+      els.pullFileList.replaceChildren();
+    }
+
+    const allConflicts = [...pullConflicts, ...deletedConflicts];
+    if (allConflicts.length > 0) {
+      els.pullConflictText.textContent = `${pluralFiles(allConflicts.length)} changed both locally and remotely — skipped unless you choose to overwrite.`;
+      renderSyncPathList(els.pullConflictList, allConflicts);
       show(els.pullConflictWarning);
     } else {
       hide(els.pullConflictWarning);
@@ -1694,6 +1730,7 @@ async function runPullCheck() {
     pullTotalCount = 0;
     updatePullStartEnabled();
     hide(els.pullEmptyNotice);
+    hide(els.pullDeletedSection);
     hide(els.pullFileSection);
     hide(els.pullConflictWarning);
     els.pullSummary.textContent = 'Choose a local sync folder to pull remote changes.';
@@ -1761,15 +1798,16 @@ function closePullModal() {
 }
 
 function handlePullProgress(data) {
-  if (data.phase === 'downloading') {
+  if (data.phase === 'downloading' || data.phase === 'deleting') {
     const pct = data.total > 0
       ? Math.round((data.completed / data.total) * 100) : 0;
     els.pullProgressFill.style.width = `${pct}%`;
     const current = data.current ? displayPath(data.current) : '';
-    els.pullProgressText.textContent = `${data.completed} / ${data.total}  ${current}`;
+    const verb = data.phase === 'deleting' ? 'Removing' : '';
+    els.pullProgressText.textContent = `${data.completed} / ${data.total}  ${verb}${current ? ` ${current}` : ''}`.trim();
   } else if (data.phase === 'done') {
     els.pullProgressFill.style.width = '100%';
-    els.pullProgressText.textContent = `Done — ${pluralFiles(data.total)} pulled`;
+    els.pullProgressText.textContent = `Done — ${data.total.toLocaleString()} change${data.total === 1 ? '' : 's'} applied`;
     pulling = false;
   }
 }
@@ -1790,8 +1828,11 @@ async function startPull() {
   const filesToPull = pullFiles.filter((file) => (
     !file.conflict || overwriteConflicts
   ));
+  const deletionsToApply = pullDeletions.filter((entry) => (
+    !entry.conflict || overwriteConflicts
+  )).map((entry) => entry.daPath);
 
-  if (filesToPull.length === 0) {
+  if (filesToPull.length + deletionsToApply.length === 0) {
     return;
   }
 
@@ -1799,6 +1840,7 @@ async function startPull() {
   els.pullStart.disabled = true;
   els.pullIncludeBinaries.disabled = true;
   hide(els.pullEmptyNotice);
+  hide(els.pullDeletedSection);
   hide(els.pullFileSection);
   hide(els.pullConflictWarning);
   show(els.pullProgress);
@@ -1816,6 +1858,7 @@ async function startPull() {
         lastModified,
         ext,
       })),
+      deletions: deletionsToApply,
     });
 
     if (result.cancelled) {

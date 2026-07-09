@@ -13,11 +13,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import {
+  mkdir, writeFile, rm, readFile, stat,
+} from 'node:fs/promises';
 import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
-  evaluatePullStatus,
+  evaluatePullStatus, runPull,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -335,6 +337,87 @@ test('evaluatePullStatus finds outdated and conflict files', async () => {
     assert.deepEqual(result.outdated, ['/b.html']);
     assert.deepEqual(result.conflicts, ['/a.html']);
     assert.equal(result.files.length, 2);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('evaluatePullStatus detects files deleted on the remote', async () => {
+  const dest = join(tmpdir(), `aem-pull-deleted-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(workDir, 'gone.html'), 'original');
+    await writeFile(join(aemDir, 'gone.html'), 'original');
+    await writeFile(join(workDir, 'edited.html'), 'local edit');
+    await writeFile(join(aemDir, 'edited.html'), 'original');
+    const manifestFiles = [
+      { daPath: '/gone.html', lastModified: '2026-01-01T00:00:00Z' },
+      { daPath: '/edited.html', lastModified: '2026-01-01T00:00:00Z' },
+      { daPath: '/still.html', lastModified: '2026-01-01T00:00:00Z' },
+    ];
+    const remoteMeta = new Map([
+      ['/still.html', { lastModified: '2026-01-01T00:00:00Z', ext: 'html' }],
+    ]);
+
+    const result = await evaluatePullStatus({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      manifestFiles,
+      remoteMeta,
+    });
+
+    assert.deepEqual(result.deletedRemotely, ['/gone.html']);
+    assert.deepEqual(result.deletedConflicts, ['/edited.html']);
+    assert.equal(result.deletions.length, 2);
+    assert.equal(result.files.length, 0);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('runPull removes locally synced files deleted on the remote', async () => {
+  const dest = join(tmpdir(), `aem-pull-run-delete-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  const client = { downloadRaw: async () => null };
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(workDir, 'gone.html'), 'original');
+    await writeFile(join(aemDir, 'gone.html'), 'original');
+    await writeFile(join(workDir, 'stay.html'), 'unchanged');
+    await writeFile(join(aemDir, 'stay.html'), 'unchanged');
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      org: 'o',
+      repo: 'r',
+      files: [
+        { daPath: '/gone.html', lastModified: '2026-01-01T00:00:00Z' },
+        { daPath: '/stay.html', lastModified: '2026-01-01T00:00:00Z' },
+      ],
+    }));
+
+    const progress = [];
+    const result = await runPull({
+      client,
+      org: 'o',
+      repo: 'r',
+      destRoot: dest,
+      files: [],
+      deletions: ['/gone.html'],
+      onProgress: (data) => progress.push(data),
+    });
+
+    assert.equal(result.pulled, 0);
+    assert.equal(result.deleted, 1);
+    await assert.rejects(stat(join(workDir, 'gone.html')));
+    await assert.rejects(stat(join(aemDir, 'gone.html')));
+    await stat(join(workDir, 'stay.html'));
+
+    const manifest = JSON.parse(await readFile(join(aemDir, 'manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.files.map((f) => f.daPath), ['/stay.html']);
+    assert.equal(progress.at(-1)?.phase, 'done');
   } finally {
     await rm(dest, { recursive: true, force: true });
   }
