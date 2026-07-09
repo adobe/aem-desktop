@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   rewriteRumBeaconBody,
   shouldRewriteRumReferer,
+  buildRumUpstreamHeaders,
   startRumProxy,
 } from '../src/main/rum-proxy.js';
 import { DESKTOP_RUM_ORIGIN } from '../src/rum-config.js';
@@ -58,6 +59,29 @@ test('rewriteRumBeaconBody rewrites file referer to fallback', () => {
   const payload = JSON.parse(out.body);
   assert.equal(payload.referer, fallback);
   assert.equal(out.referer, fallback);
+});
+
+test('buildRumUpstreamHeaders forces JSON for beacon POSTs', () => {
+  const headers = buildRumUpstreamHeaders(
+    { method: 'POST', headers: { 'content-type': 'text/plain;charset=UTF-8' } },
+    '{"checkpoint":"top"}',
+  );
+  assert.equal(headers['content-type'], 'application/json');
+  assert.equal(headers['content-length'], String(Buffer.byteLength('{"checkpoint":"top"}')));
+  assert.equal(headers.referer, undefined);
+});
+
+test('rum proxy rejects non-rum paths', async () => {
+  const proxy = await startRumProxy({
+    fetchFn: async () => new Response('nope', { status: 200 }),
+  });
+
+  try {
+    const resp = await fetch(`${proxy.baseUrl}/preview/page`);
+    assert.equal(resp.status, 404);
+  } finally {
+    await proxy.close();
+  }
 });
 
 test('rum proxy forwards GET script requests to rum.hlx.page', async () => {
@@ -110,6 +134,7 @@ test('rum proxy rewrites beacon referer in JSON body but not HTTP Referer header
       }),
     });
     assert.equal(resp.status, 201);
+    assert.equal(forwardedHeaders?.['content-type'], 'application/json');
     assert.equal(forwardedHeaders?.referer, undefined);
     assert.equal(JSON.parse(forwardedBody || '{}').referer, cooperativeReferer);
 

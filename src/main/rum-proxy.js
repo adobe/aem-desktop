@@ -12,6 +12,7 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { DESKTOP_RUM_ORIGIN, RUM_UPSTREAM_ORIGIN } from '../rum-config.js';
+import { rumUpstreamFetch } from './rum-upstream-fetch.js';
 
 const noop = () => {};
 
@@ -28,22 +29,6 @@ function rumLogger(log) {
     warn: noop,
     error: noop,
   };
-}
-
-const SKIP_REQUEST_HEADERS = new Set([
-  'connection',
-  'host',
-  'proxy-connection',
-  'origin',
-  'referer',
-]);
-
-/**
- * @param {string} name lower-cased header name
- * @returns {boolean}
- */
-function shouldSkipRequestHeader(name) {
-  return SKIP_REQUEST_HEADERS.has(name) || name.startsWith('sec-fetch-');
 }
 
 const SKIP_RESPONSE_HEADERS = new Set([
@@ -103,6 +88,51 @@ export function rewriteRumBeaconBody(bodyText, fallbackReferer) {
 }
 
 /**
+ * Build a minimal, safe header set for the upstream rum.hlx.page request.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {string|undefined} body
+ * @returns {Record<string, string>}
+ */
+export function buildRumUpstreamHeaders(req, body) {
+  /** @type {Record<string, string>} */
+  const headers = {};
+  if (body !== undefined) {
+    headers['content-type'] = 'application/json';
+    headers['content-length'] = String(Buffer.byteLength(body));
+    return headers;
+  }
+  if (typeof req.headers.accept === 'string') {
+    headers.accept = req.headers.accept;
+  }
+  if (typeof req.headers['if-none-match'] === 'string') {
+    headers['if-none-match'] = req.headers['if-none-match'];
+  }
+  if (typeof req.headers['if-modified-since'] === 'string') {
+    headers['if-modified-since'] = req.headers['if-modified-since'];
+  }
+  return headers;
+}
+
+/**
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function formatRumUpstreamError(err) {
+  if (!err || typeof err !== 'object') {
+    return String(err);
+  }
+  const parts = [];
+  if ('message' in err && err.message) {
+    parts.push(String(err.message));
+  }
+  if ('cause' in err && err.cause && typeof err.cause === 'object' && 'message' in err.cause) {
+    parts.push(`cause: ${err.cause.message}`);
+  }
+  return parts.length > 0 ? parts.join(' — ') : 'upstream request failed';
+}
+
+/**
  * @param {import('node:http').IncomingMessage} req
  * @returns {Promise<Buffer>}
  */
@@ -123,12 +153,13 @@ async function readRequestBody(req) {
  *   log?: import('electron-log').MainLogger,
  * }} [options]
  */
-export async function startRumProxy({ fetchFn = fetch, log } = {}) {
+export async function startRumProxy({ fetchFn = rumUpstreamFetch, log } = {}) {
   const scope = rumLogger(log);
   let lastDesktopReferer = `${DESKTOP_RUM_ORIGIN}/`;
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
+      scope.warn('400 — request without URL');
       res.writeHead(400);
       res.end('Bad request');
       return;
@@ -136,21 +167,14 @@ export async function startRumProxy({ fetchFn = fetch, log } = {}) {
 
     const requestUrl = new URL(req.url, 'http://127.0.0.1');
     if (!requestUrl.pathname.startsWith('/.rum/')) {
+      scope.warn(`404 — ${req.method} ${req.url}`);
       res.writeHead(404);
       res.end('Not found');
       return;
     }
 
     const upstreamUrl = `${RUM_UPSTREAM_ORIGIN}${requestUrl.pathname}${requestUrl.search}`;
-    /** @type {Record<string, string>} */
-    const reqHeaders = {};
-    const names = Object.keys(req.headers);
-    for (let i = 0; i < names.length; i += 1) {
-      const name = names[i];
-      if (!shouldSkipRequestHeader(name.toLowerCase())) {
-        reqHeaders[name] = /** @type {string} */ (req.headers[name]);
-      }
-    }
+    scope.info(`→ ${req.method} ${requestUrl.pathname}${requestUrl.search}`);
 
     let body;
     if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
@@ -159,21 +183,26 @@ export async function startRumProxy({ fetchFn = fetch, log } = {}) {
         const rewritten = rewriteRumBeaconBody(raw.toString('utf8'), lastDesktopReferer);
         body = rewritten.body;
         lastDesktopReferer = rewritten.referer;
-        // Site identity lives in the JSON payload. Do not forward an HTTP Referer
-        // to rum.hlx.page — Chromium net.fetch rejects cross-origin referers with
-        // ERR_BLOCKED_BY_CLIENT (same constraint as the preview proxy).
-        reqHeaders['content-type'] = req.headers['content-type'] || 'application/json';
-        reqHeaders['content-length'] = String(Buffer.byteLength(body));
+        scope.debug(`beacon referer ${rewritten.referer}`);
       }
     }
 
+    const reqHeaders = buildRumUpstreamHeaders(req, body);
+
     try {
+      scope.debug(`upstream ${req.method} ${upstreamUrl}`);
       const upstream = await fetchFn(upstreamUrl, {
         method: req.method,
         headers: reqHeaders,
         body,
         redirect: 'follow',
       });
+
+      if (!upstream.ok) {
+        scope.warn(`upstream ${req.method} ${requestUrl.pathname} -> ${upstream.status}`);
+      } else {
+        scope.info(`upstream ${req.method} ${requestUrl.pathname} -> ${upstream.status}`);
+      }
 
       /** @type {Record<string, string|string[]>} */
       const respHeaders = {
@@ -192,7 +221,8 @@ export async function startRumProxy({ fetchFn = fetch, log } = {}) {
       }
       Readable.fromWeb(upstream.body).pipe(res);
     } catch (err) {
-      scope.warn(`upstream ${req.method} ${requestUrl.pathname} failed: ${err.message}`);
+      const detail = formatRumUpstreamError(err);
+      scope.error(`upstream ${req.method} ${requestUrl.pathname} failed: ${detail}`);
       res.writeHead(502);
       res.end('Bad gateway');
     }
