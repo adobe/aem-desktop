@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/adobe/aem-desktop/compare/v1.7.0...v1.8.0) (2026-07-09)
+
+
+### Bug Fixes
+
+* route RUM upstream through Node https instead of net.fetch ([be8d432](https://github.com/adobe/aem-desktop/commit/be8d432df6d9447c5d662b5381fe50cfcd7e97f6))
+
+
+### Features
+
+* apply remote deletions during pull ([32768ef](https://github.com/adobe/aem-desktop/commit/32768efa0aa5e5cf52b8c333a98abe7edfd8e8cd))
+
 # [1.7.0](https://github.com/adobe/aem-desktop/compare/v1.6.4...v1.7.0) (2026-07-09)
 
 
