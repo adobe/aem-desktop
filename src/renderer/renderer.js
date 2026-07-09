@@ -31,6 +31,7 @@ import {
   togglePathsCheckState,
 } from './review-view.js';
 import { renderDocumentView, renderDocumentDiffView } from './document-view.js';
+import { initDesktopRum, trackDesktopPageView } from './rum.js';
 
 const state = {
   view: 'home',
@@ -204,9 +205,19 @@ function showView(view) {
   }
 }
 
+function trackShellPageView(overrides = {}) {
+  const site = activeSite();
+  trackDesktopPageView({
+    view: state.view,
+    site: site ? { org: site.org, repo: site.repo } : null,
+    daPath: overrides.daPath ?? state.tree.openedDaPath,
+  });
+}
+
 function goHome() {
   showView('home');
   renderSites();
+  trackShellPageView();
 }
 
 async function enterBrowse(siteId) {
@@ -220,6 +231,7 @@ async function enterBrowse(siteId) {
   showView('browse');
   renderSites();
   await refreshTree();
+  trackShellPageView();
 }
 
 function show(element) {
@@ -1250,6 +1262,7 @@ async function previewFile(item) {
       previewOrigin: preview.previewOrigin,
     });
     syncBrowseContentView();
+    trackShellPageView({ daPath: item.daPath });
     if (browseContentMode === 'code') {
       await loadBrowseCode(item);
     } else if (browseContentMode === 'document') {
@@ -2366,6 +2379,7 @@ async function openPushModal() {
   );
 
   showView('review');
+  trackShellPageView();
 
   try {
     const { empty, diffs } = await loadReviewChanges();
@@ -2916,6 +2930,10 @@ async function loadSyncFolderPreference() {
 async function init() {
   wireUi();
   state.icons = await loadIcons();
+  await initDesktopRum(
+    () => window.aemDesktop.getRumBaseUrl(),
+    () => window.aemDesktop.isDev(),
+  );
   await loadSyncFolderPreference();
   updateBrowseCodeAvailability();
   syncReviewContentView();
@@ -2933,6 +2951,7 @@ async function init() {
     }
   });
   showView('home');
+  trackShellPageView();
 }
 
 init();
