@@ -37,6 +37,24 @@ export function isBinaryExtension(ext) {
   return !TEXT_EXTENSIONS.has(ext.toLowerCase());
 }
 
+const PUSHABLE_ROOT_EXTENSIONS = new Set(['html', 'json']);
+
+/**
+ * Root-level files that are not .html or .json are local tooling artifacts
+ * (CSVs, scripts, notes) and should not appear in push/sync diffs as new.
+ *
+ * @param {string} daPath
+ * @returns {boolean}
+ */
+export function isPushableLocalNewFile(daPath) {
+  const segments = daPath.split('/').filter(Boolean);
+  if (segments.length !== 1) {
+    return true;
+  }
+  const ext = extname(segments[0]).slice(1).toLowerCase();
+  return PUSHABLE_ROOT_EXTENSIONS.has(ext);
+}
+
 /**
  * @param {string} destRoot
  * @param {string} org
@@ -253,7 +271,7 @@ export async function checkLocalSyncBadges({
     for (const localPath of localFiles) {
       const rel = relative(root, localPath);
       const daPath = `/${rel}`;
-      if (!manifestMap.has(daPath) && !badges[daPath]) {
+      if (!manifestMap.has(daPath) && !badges[daPath] && isPushableLocalNewFile(daPath)) {
         badges[daPath] = 'new';
       }
     }
@@ -378,7 +396,7 @@ export async function checkSyncStatus({
     if (!remoteSet.has(daPath)) {
       if (manifestMap.has(daPath)) {
         localOnly.push(daPath);
-      } else {
+      } else if (isPushableLocalNewFile(daPath)) {
         localNew.push(daPath);
       }
     }
@@ -1056,7 +1074,7 @@ export async function checkPushStatus({ destRoot, org, repo }) {
   for (const localPath of localFiles) {
     const rel = relative(root, localPath);
     const daPath = `/${rel}`;
-    if (!manifestMap.has(daPath)) {
+    if (!manifestMap.has(daPath) && isPushableLocalNewFile(daPath)) {
       localNew.push(daPath);
     }
   }

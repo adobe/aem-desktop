@@ -17,8 +17,46 @@ import {
   mkdir, writeFile, rm, copyFile, readFile, stat,
 } from 'node:fs/promises';
 import {
-  checkPushStatus, syncPaths, manifestPath, runRevert,
+  checkPushStatus, syncPaths, manifestPath, runRevert, isPushableLocalNewFile,
 } from '../src/main/da-sync.js';
+
+test('isPushableLocalNewFile allows root html/json and nested files', () => {
+  assert.equal(isPushableLocalNewFile('/index.html'), true);
+  assert.equal(isPushableLocalNewFile('/config.json'), true);
+  assert.equal(isPushableLocalNewFile('/data.csv'), false);
+  assert.equal(isPushableLocalNewFile('/notes.md'), false);
+  assert.equal(isPushableLocalNewFile('/script.js'), false);
+  assert.equal(isPushableLocalNewFile('/blog/post.md'), true);
+  assert.equal(isPushableLocalNewFile('/assets/data.csv'), true);
+});
+
+test('checkPushStatus omits non-html/json root files from localNew', async () => {
+  const dest = join(tmpdir(), `aem-push-root-filter-${Date.now()}`);
+  const org = 'o';
+  const repo = 'r';
+  const workDir = join(dest, org, repo);
+  const aemDir = join(workDir, '.aem');
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await mkdir(join(workDir, 'blog'), { recursive: true });
+    await writeFile(manifestPath(dest, org, repo), JSON.stringify({
+      org,
+      repo,
+      files: [],
+    }));
+    await writeFile(join(workDir, 'index.html'), 'home');
+    await writeFile(join(workDir, 'config.json'), '{}');
+    await writeFile(join(workDir, 'data.csv'), 'a,b');
+    await writeFile(join(workDir, 'notes.md'), '# notes');
+    await writeFile(join(workDir, 'script.js'), 'console.log(1)');
+    await writeFile(join(workDir, 'blog', 'post.md'), '# post');
+
+    const status = await checkPushStatus({ destRoot: dest, org, repo });
+    assert.deepEqual(status.localNew.sort(), ['/blog/post.md', '/config.json', '/index.html']);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
 
 test('checkPushStatus reports remaining modified files after one is pushed', async () => {
   const dest = join(tmpdir(), `aem-push-test-${Date.now()}`);
