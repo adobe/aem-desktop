@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   daPathsToBulkPaths,
+  helix6BulkActionLabel,
   isHelix6JobActive,
   runHelix6BulkWorkflow,
 } from '../src/main/helix6-bulk.js';
@@ -26,6 +27,13 @@ test('daPathsToBulkPaths maps html and preserves json paths', () => {
   assert.deepEqual(paths, ['/blog/post', '/metadata.json', '/styles.css']);
 });
 
+test('helix6BulkActionLabel maps delete operations', () => {
+  assert.equal(helix6BulkActionLabel('preview', false), 'preview');
+  assert.equal(helix6BulkActionLabel('publish', false), 'publish');
+  assert.equal(helix6BulkActionLabel('preview', true), 'unpreview');
+  assert.equal(helix6BulkActionLabel('publish', true), 'unpublish');
+});
+
 test('isHelix6JobActive recognizes running states', () => {
   assert.equal(isHelix6JobActive('running'), true);
   assert.equal(isHelix6JobActive('succeeded'), false);
@@ -34,12 +42,12 @@ test('isHelix6JobActive recognizes running states', () => {
 test('runHelix6BulkWorkflow previews then publishes when requested', async () => {
   const calls = [];
   const client = {
-    startBulkPreview: async (org, repo, paths) => {
-      calls.push(['preview', paths]);
+    startBulkPreview: async (org, repo, paths, { delete: remove = false } = {}) => {
+      calls.push(['preview', paths, remove]);
       return { job: { topic: 'preview', name: 'job-1', state: 'created' } };
     },
-    startBulkPublish: async (org, repo, paths) => {
-      calls.push(['publish', paths]);
+    startBulkPublish: async (org, repo, paths, { delete: remove = false } = {}) => {
+      calls.push(['publish', paths, remove]);
       return { job: { topic: 'publish', name: 'job-2', state: 'created' } };
     },
     getJobStatus: async (org, repo, topic, jobName) => {
@@ -64,7 +72,77 @@ test('runHelix6BulkWorkflow previews then publishes when requested', async () =>
     onProgress: (data) => progress.push(data),
   });
 
-  assert.deepEqual(calls[0], ['preview', ['/', '/foo.json']]);
-  assert.deepEqual(calls.find((c) => c[0] === 'publish'), ['publish', ['/', '/foo.json']]);
+  assert.deepEqual(calls[0], ['preview', ['/', '/foo.json'], false]);
+  assert.deepEqual(calls.find((c) => c[0] === 'publish' && c[2] === false), ['publish', ['/', '/foo.json'], false]);
   assert.equal(progress.at(-1)?.phase, 'done');
+});
+
+test('runHelix6BulkWorkflow unpreviews and unpublishes deleted paths', async () => {
+  const calls = [];
+  const client = {
+    startBulkPreview: async (org, repo, paths, { delete: remove = false } = {}) => {
+      calls.push(['preview', paths, remove]);
+      return { job: { topic: 'preview', name: 'job-1', state: 'created' } };
+    },
+    startBulkPublish: async (org, repo, paths, { delete: remove = false } = {}) => {
+      calls.push(['publish', paths, remove]);
+      return { job: { topic: 'publish', name: 'job-2', state: 'created' } };
+    },
+    getJobStatus: async () => ({
+      state: 'succeeded',
+      progress: { total: 1, processed: 1, failed: 0 },
+    }),
+  };
+
+  await runHelix6BulkWorkflow({
+    client,
+    org: 'owner',
+    repo: 'site',
+    daPaths: [],
+    deletedDaPaths: ['/old/page.html'],
+    mode: 'preview-publish',
+    pollIntervalMs: 1,
+    onProgress: () => {},
+  });
+
+  assert.deepEqual(calls, [
+    ['preview', ['/old/page'], true],
+    ['publish', ['/old/page'], true],
+  ]);
+});
+
+test('runHelix6BulkWorkflow handles mixed updates and deletions', async () => {
+  const calls = [];
+  const client = {
+    startBulkPreview: async (org, repo, paths, { delete: remove = false } = {}) => {
+      calls.push(['preview', paths, remove]);
+      return { job: { topic: 'preview', name: `preview-${calls.length}`, state: 'created' } };
+    },
+    startBulkPublish: async (org, repo, paths, { delete: remove = false } = {}) => {
+      calls.push(['publish', paths, remove]);
+      return { job: { topic: 'publish', name: `publish-${calls.length}`, state: 'created' } };
+    },
+    getJobStatus: async () => ({
+      state: 'succeeded',
+      progress: { total: 1, processed: 1, failed: 0 },
+    }),
+  };
+
+  await runHelix6BulkWorkflow({
+    client,
+    org: 'owner',
+    repo: 'site',
+    daPaths: ['/new.html'],
+    deletedDaPaths: ['/gone.html'],
+    mode: 'preview-publish',
+    pollIntervalMs: 1,
+    onProgress: () => {},
+  });
+
+  assert.deepEqual(calls, [
+    ['preview', ['/new'], false],
+    ['publish', ['/new'], false],
+    ['preview', ['/gone'], true],
+    ['publish', ['/gone'], true],
+  ]);
 });

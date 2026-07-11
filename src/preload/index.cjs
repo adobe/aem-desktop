@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
     'preview:build-aem-urls',
     { siteId, daPaths },
   ),
+  buildHelix6BulkPaths: (daPaths) => ipcRenderer.invoke('helix6:bulk-paths', { daPaths }),
   setActivePreviewSite: (siteId) => ipcRenderer.invoke('preview:set-active-site', { siteId }),
   loginPreview: (siteId) => ipcRenderer.invoke('preview:login', { siteId }),
   onPreviewAuthRequired: (callback) => {

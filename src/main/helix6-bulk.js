@@ -62,17 +62,40 @@ function sleep(ms) {
 }
 
 /**
+ * @param {string} topic
+ * @param {boolean} remove
+ * @returns {string}
+ */
+export function helix6BulkActionLabel(topic, remove) {
+  if (remove) {
+    return topic === 'preview' ? 'unpreview' : 'unpublish';
+  }
+  return topic;
+}
+
+/**
  * Runs helix6 bulk preview and optional publish jobs with polling.
  *
  * @param {{
  *   client: {
- *     startBulkPreview: (org: string, repo: string, paths: string[]) => Promise<object>,
- *     startBulkPublish: (org: string, repo: string, paths: string[]) => Promise<object>,
+ *     startBulkPreview: (
+ *       org: string,
+ *       repo: string,
+ *       paths: string[],
+ *       options?: { delete?: boolean },
+ *     ) => Promise<object>,
+ *     startBulkPublish: (
+ *       org: string,
+ *       repo: string,
+ *       paths: string[],
+ *       options?: { delete?: boolean },
+ *     ) => Promise<object>,
  *     getJobStatus: (org: string, repo: string, topic: string, jobName: string) => Promise<object>,
  *   },
  *   org: string,
  *   repo: string,
  *   daPaths: string[],
+ *   deletedDaPaths?: string[],
  *   mode: 'preview' | 'preview-publish',
  *   onProgress: (data: object) => void,
  *   signal?: AbortSignal,
@@ -84,42 +107,57 @@ export async function runHelix6BulkWorkflow({
   org,
   repo,
   daPaths,
+  deletedDaPaths = [],
   mode,
   onProgress,
   signal,
   pollIntervalMs = 1500,
 }) {
-  const paths = daPathsToBulkPaths(daPaths);
-  if (paths.length === 0) {
+  const updatedPaths = daPathsToBulkPaths(daPaths);
+  const removedPaths = daPathsToBulkPaths(deletedDaPaths);
+  const pathCount = updatedPaths.length + removedPaths.length;
+  if (pathCount === 0) {
     throw new Error('No paths to preview or publish');
   }
 
   onProgress({
     phase: 'starting',
     mode,
-    pathCount: paths.length,
-    paths,
+    pathCount,
+    updatedPaths,
+    removedPaths,
   });
 
   /**
    * @param {string} topic
-   * @param {(org: string, repo: string, paths: string[]) => Promise<object>} startFn
+   * @param {string[]} paths
+   * @param {{ delete?: boolean }} [options]
    */
-  const runJob = async (topic, startFn) => {
-    const started = await startFn(org, repo, paths);
+  const runJob = async (topic, paths, { delete: remove = false } = {}) => {
+    if (paths.length === 0) {
+      return;
+    }
+    const action = helix6BulkActionLabel(topic, remove);
+    const startFn = topic === 'preview'
+      ? client.startBulkPreview.bind(client)
+      : client.startBulkPublish.bind(client);
+    const started = await startFn(org, repo, paths, { delete: remove });
     const job = started.job || started;
     const jobName = job.name;
     const jobTopic = job.topic || topic;
     if (!jobName) {
-      throw new Error(`Bulk ${topic} job did not return a job name`);
+      throw new Error(`Bulk ${action} job did not return a job name`);
     }
 
     onProgress({
       phase: 'job',
       topic: jobTopic,
+      action,
+      delete: remove,
       jobName,
       state: job.state || 'created',
       progress: job.progress || null,
+      pathCount: paths.length,
     });
 
     while (true) {
@@ -132,29 +170,36 @@ export async function runHelix6BulkWorkflow({
       onProgress({
         phase: 'job',
         topic: jobTopic,
+        action,
+        delete: remove,
         jobName,
         state,
         progress: status.progress || status.job?.progress || null,
+        pathCount: paths.length,
       });
       if (!isHelix6JobActive(state)) {
         const normalized = String(state || '').toLowerCase();
         if (normalized === 'failed' || normalized === 'error') {
-          throw new Error(`${jobTopic} job failed`);
+          throw new Error(`${action} job failed`);
         }
-        return status;
+        return;
       }
       await sleep(pollIntervalMs); // eslint-disable-line no-await-in-loop
     }
   };
 
-  await runJob('preview', client.startBulkPreview.bind(client));
+  await runJob('preview', updatedPaths, { delete: false });
   if (mode === 'preview-publish') {
-    await runJob('publish', client.startBulkPublish.bind(client));
+    await runJob('publish', updatedPaths, { delete: false });
+  }
+  await runJob('preview', removedPaths, { delete: true });
+  if (mode === 'preview-publish') {
+    await runJob('publish', removedPaths, { delete: true });
   }
 
   onProgress({
     phase: 'done',
     mode,
-    pathCount: paths.length,
+    pathCount,
   });
 }
