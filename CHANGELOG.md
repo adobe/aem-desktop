@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/adobe/aem-desktop/compare/v1.8.0...v1.9.0) (2026-07-15)
+
+
+### Features
+
+* unpreview and unpublish pages deleted on push ([d3233d3](https://github.com/adobe/aem-desktop/commit/d3233d31322230af3b0493369b41342534ace47b))
+
 # [1.8.0](https://github.com/adobe/aem-desktop/compare/v1.7.0...v1.8.0) (2026-07-09)
 
 
