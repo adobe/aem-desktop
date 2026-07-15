@@ -292,6 +292,18 @@
   margin-top: 0;
 }
 
+.helix6-path-section {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 0.35rem;
+  list-style: none;
+}
+
+.helix6-path-section:first-child {
+  margin-top: 0;
+}
+
 .helix6-mode-field {
   -webkit-app-region: no-drag;
   border: 1px solid var(--rail-border);

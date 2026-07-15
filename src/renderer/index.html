@@ -153,6 +153,14 @@
               </button>
               <button
                 type="button"
+                id="review-copy-deleted-pages"
+                class="s2-btn review-copy-deleted-pages hidden"
+                hidden
+              >
+                Copy deleted pages
+              </button>
+              <button
+                type="button"
                 id="review-preview-publish"
                 class="s2-btn s2-btn-primary review-preview-publish hidden"
                 hidden
@@ -323,13 +331,13 @@
           <ul id="helix6-path-list" class="sync-path-list"></ul>
           <fieldset class="helix6-mode-field">
             <legend class="helix6-mode-legend">Action</legend>
-            <label class="helix6-mode-option">
+            <label class="helix6-mode-option" id="helix6-mode-preview-label">
               <input type="radio" name="helix6-mode" value="preview" checked />
-              Preview updated content
+              <span id="helix6-mode-preview-text">Preview updated content</span>
             </label>
-            <label class="helix6-mode-option">
+            <label class="helix6-mode-option" id="helix6-mode-publish-label">
               <input type="radio" name="helix6-mode" value="preview-publish" />
-              Preview and publish to live
+              <span id="helix6-mode-publish-text">Preview and publish to live</span>
             </label>
           </fieldset>
           <div id="helix6-progress" class="sync-progress hidden" hidden>

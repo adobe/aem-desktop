@@ -316,13 +316,13 @@ export class ContentApiClient {
    * @param {string[]} paths
    * @returns {Promise<object>}
    */
-  async startBulkPreview(org, repo, paths) {
+  async startBulkPreview(org, repo, paths, { delete: remove = false } = {}) {
     this.assertHelix6Backend();
     const url = buildAemApiBulkPreviewUrl(org, repo);
     const res = await this.fetch(url, {
       method: 'POST',
       headers: { ...this.authHeader, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths, forceAsync: true }),
+      body: JSON.stringify({ paths, forceAsync: true, delete: remove }),
     });
     if (res.status === 401) {
       throw await buildUnauthorizedError('POST', url, res);
@@ -339,13 +339,13 @@ export class ContentApiClient {
    * @param {string[]} paths
    * @returns {Promise<object>}
    */
-  async startBulkPublish(org, repo, paths) {
+  async startBulkPublish(org, repo, paths, { delete: remove = false } = {}) {
     this.assertHelix6Backend();
     const url = buildAemApiBulkPublishUrl(org, repo);
     const res = await this.fetch(url, {
       method: 'POST',
       headers: { ...this.authHeader, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths, forceAsync: true }),
+      body: JSON.stringify({ paths, forceAsync: true, delete: remove }),
     });
     if (res.status === 401) {
       throw await buildUnauthorizedError('POST', url, res);

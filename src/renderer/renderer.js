@@ -142,9 +142,12 @@ const els = {
   reviewProgressText: document.getElementById('review-progress-text'),
   reviewPostPushActions: document.getElementById('review-post-push-actions'),
   reviewCopyPreviewUrls: document.getElementById('review-copy-preview-urls'),
+  reviewCopyDeletedPages: document.getElementById('review-copy-deleted-pages'),
   reviewPreviewPublish: document.getElementById('review-preview-publish'),
   helix6Modal: document.getElementById('helix6-modal'),
   helix6PathList: document.getElementById('helix6-path-list'),
+  helix6ModePreviewText: document.getElementById('helix6-mode-preview-text'),
+  helix6ModePublishText: document.getElementById('helix6-mode-publish-text'),
   helix6Progress: document.getElementById('helix6-progress'),
   helix6ProgressFill: document.getElementById('helix6-progress-fill'),
   helix6ProgressText: document.getElementById('helix6-progress-text'),
@@ -162,12 +165,24 @@ function isHelix6Site() {
 }
 
 function showReviewPostPushActions() {
-  if (lastPushedDaPaths.length === 0) {
+  const hasUpdates = lastPushedDaPaths.length > 0;
+  const hasDeletions = lastPushedDeletedDaPaths.length > 0;
+  if (!hasUpdates && !hasDeletions) {
     hide(els.reviewPostPushActions);
     return;
   }
   show(els.reviewPostPushActions);
-  if (isHelix6Site()) {
+  if (hasUpdates) {
+    show(els.reviewCopyPreviewUrls);
+  } else {
+    hide(els.reviewCopyPreviewUrls);
+  }
+  if (hasDeletions) {
+    show(els.reviewCopyDeletedPages);
+  } else {
+    hide(els.reviewCopyDeletedPages);
+  }
+  if (isHelix6Site() && (hasUpdates || hasDeletions)) {
     show(els.reviewPreviewPublish);
   } else {
     hide(els.reviewPreviewPublish);
@@ -2123,6 +2138,8 @@ let pushing = false;
 let reverting = false;
 /** @type {string[]} */
 let lastPushedDaPaths = [];
+/** @type {string[]} */
+let lastPushedDeletedDaPaths = [];
 let reviewDiffs = [];
 /** @type {Set<string>} */
 let reviewSelectedPaths = new Set();
@@ -2323,12 +2340,16 @@ function resetReviewProgressUi() {
   hide(els.reviewProgress);
   hide(els.reviewPostPushActions);
   hide(els.reviewPreviewPublish);
+  hide(els.reviewCopyDeletedPages);
   els.reviewProgressFill.style.width = '0%';
   els.reviewProgressText.textContent = '';
   els.reviewCopyPreviewUrls.textContent = 'Copy preview URLs';
   els.reviewCopyPreviewUrls.disabled = false;
+  els.reviewCopyDeletedPages.textContent = 'Copy deleted pages';
+  els.reviewCopyDeletedPages.disabled = false;
   els.reviewCancel.textContent = 'Cancel';
   lastPushedDaPaths = [];
+  lastPushedDeletedDaPaths = [];
   pushing = false;
   reverting = false;
 }
@@ -2371,6 +2392,25 @@ async function copyReviewPreviewUrls() {
     }, 2000);
   } catch {
     els.reviewCopyPreviewUrls.textContent = 'Copy failed';
+  }
+}
+
+async function copyReviewDeletedPages() {
+  if (lastPushedDeletedDaPaths.length === 0) {
+    return;
+  }
+
+  try {
+    const paths = await window.aemDesktop.buildHelix6BulkPaths(lastPushedDeletedDaPaths);
+    await navigator.clipboard.writeText(paths.join('\n'));
+    els.reviewCopyDeletedPages.textContent = 'Copied!';
+    window.setTimeout(() => {
+      if (els.reviewCopyDeletedPages.textContent === 'Copied!') {
+        els.reviewCopyDeletedPages.textContent = 'Copy deleted pages';
+      }
+    }, 2000);
+  } catch {
+    els.reviewCopyDeletedPages.textContent = 'Copy failed';
   }
 }
 
@@ -2505,7 +2545,7 @@ function handleReviewProgress(data) {
       pushing = false;
       updateReviewActionButtons({ forceDisabled: true });
       els.reviewCancel.textContent = 'Done';
-      if (lastPushedDaPaths.length > 0) {
+      if (lastPushedDaPaths.length > 0 || lastPushedDeletedDaPaths.length > 0) {
         showReviewPostPushActions();
       } else {
         hide(els.reviewPostPushActions);
@@ -2576,6 +2616,7 @@ async function startPush() {
     .map((d) => d.daPath);
 
   lastPushedDaPaths = filesToPush;
+  lastPushedDeletedDaPaths = filesToDelete;
   hide(els.reviewPostPushActions);
 
   try {
@@ -2588,10 +2629,12 @@ async function startPush() {
 
     if (result.cancelled) {
       lastPushedDaPaths = [];
+      lastPushedDeletedDaPaths = [];
       els.reviewProgressText.textContent = 'Cancelled';
       els.reviewProgressFill.style.width = '0%';
     } else if (result.error) {
       lastPushedDaPaths = [];
+      lastPushedDeletedDaPaths = [];
       els.reviewProgressText.textContent = result.error.message;
       hide(els.reviewPostPushActions);
       await showRequestErrorDialog('Push failed', result.error);
@@ -2600,6 +2643,7 @@ async function startPush() {
     }
   } catch (err) {
     lastPushedDaPaths = [];
+    lastPushedDeletedDaPaths = [];
     els.reviewProgressText.textContent = err.message || 'Push failed';
     hide(els.reviewPostPushActions);
     await showRequestErrorDialog('Push failed', err);
@@ -2620,13 +2664,52 @@ function selectedHelix6Mode() {
   return checked?.value || 'preview';
 }
 
-function populateHelix6PathList() {
-  els.helix6PathList.replaceChildren();
-  for (const daPath of lastPushedDaPaths) {
+function helix6ActionLabels() {
+  const hasUpdates = lastPushedDaPaths.length > 0;
+  const hasDeletions = lastPushedDeletedDaPaths.length > 0;
+  if (hasUpdates && hasDeletions) {
+    return {
+      preview: 'Preview updates and unpreview deletions',
+      publish: 'Preview, publish, and unpublish deletions',
+    };
+  }
+  if (hasDeletions) {
+    return {
+      preview: 'Unpreview deleted pages',
+      publish: 'Unpreview and unpublish deleted pages',
+    };
+  }
+  return {
+    preview: 'Preview updated content',
+    publish: 'Preview and publish to live',
+  };
+}
+
+function updateHelix6ModeLabels() {
+  const labels = helix6ActionLabels();
+  els.helix6ModePreviewText.textContent = labels.preview;
+  els.helix6ModePublishText.textContent = labels.publish;
+}
+
+function appendHelix6PathSection(title, daPaths) {
+  if (daPaths.length === 0) {
+    return;
+  }
+  const heading = document.createElement('li');
+  heading.className = 'helix6-path-section';
+  heading.textContent = title;
+  els.helix6PathList.append(heading);
+  for (const daPath of daPaths) {
     const li = document.createElement('li');
     li.textContent = displayPath(daPath);
     els.helix6PathList.append(li);
   }
+}
+
+function populateHelix6PathList() {
+  els.helix6PathList.replaceChildren();
+  appendHelix6PathSection('Updated', lastPushedDaPaths);
+  appendHelix6PathSection('Deleted', lastPushedDeletedDaPaths);
 }
 
 function resetHelix6ModalUi() {
@@ -2640,11 +2723,14 @@ function resetHelix6ModalUi() {
 }
 
 function openHelix6Modal() {
-  if (!isHelix6Site() || lastPushedDaPaths.length === 0) {
+  const hasUpdates = lastPushedDaPaths.length > 0;
+  const hasDeletions = lastPushedDeletedDaPaths.length > 0;
+  if (!isHelix6Site() || (!hasUpdates && !hasDeletions)) {
     return;
   }
   resetHelix6ModalUi();
   populateHelix6PathList();
+  updateHelix6ModeLabels();
   const previewRadio = els.helix6Modal.querySelector('input[value="preview"]');
   if (previewRadio) {
     previewRadio.checked = true;
@@ -2660,13 +2746,27 @@ function closeHelix6Modal() {
   resetHelix6ModalUi();
 }
 
+function helix6ProgressVerb(action) {
+  switch (action) {
+    case 'unpreview':
+      return 'Unpreviewing';
+    case 'unpublish':
+      return 'Unpublishing';
+    case 'publish':
+      return 'Publishing';
+    default:
+      return 'Previewing';
+  }
+}
+
 function formatHelix6Progress(data) {
   if (data.phase === 'starting') {
-    const action = data.mode === 'preview-publish' ? 'preview and publish' : 'preview';
-    return `Starting ${action} for ${data.pathCount} path(s)…`;
+    const labels = helix6ActionLabels();
+    const action = data.mode === 'preview-publish' ? labels.publish : labels.preview;
+    return `Starting — ${action.toLowerCase()} (${data.pathCount} path(s))…`;
   }
   if (data.phase === 'job') {
-    const label = data.topic === 'publish' ? 'Publishing' : 'Previewing';
+    const label = helix6ProgressVerb(data.action);
     const prog = data.progress;
     if (prog && typeof prog.total === 'number') {
       const processed = prog.processed ?? 0;
@@ -2677,9 +2777,10 @@ function formatHelix6Progress(data) {
     return `${label}… (${data.state || 'running'})`;
   }
   if (data.phase === 'done') {
+    const labels = helix6ActionLabels();
     return data.mode === 'preview-publish'
-      ? 'Preview and publish complete'
-      : 'Preview complete';
+      ? `${labels.publish} complete`
+      : `${labels.preview} complete`;
   }
   return '';
 }
@@ -2699,7 +2800,9 @@ function handleHelix6Progress(data) {
 }
 
 async function startHelix6Bulk() {
-  if (!state.activeSiteId || lastPushedDaPaths.length === 0 || helix6Running) {
+  const hasUpdates = lastPushedDaPaths.length > 0;
+  const hasDeletions = lastPushedDeletedDaPaths.length > 0;
+  if (!state.activeSiteId || (!hasUpdates && !hasDeletions) || helix6Running) {
     return;
   }
 
@@ -2716,6 +2819,7 @@ async function startHelix6Bulk() {
     const result = await window.aemDesktop.runHelix6Bulk({
       siteId: state.activeSiteId,
       daPaths: lastPushedDaPaths,
+      deletedDaPaths: lastPushedDeletedDaPaths,
       mode: selectedHelix6Mode(),
     });
     if (result.cancelled) {
@@ -2902,6 +3006,7 @@ function wireUi() {
   els.reviewRevert.addEventListener('click', startRevert);
   els.reviewCancel.addEventListener('click', handleReviewCancelClick);
   els.reviewCopyPreviewUrls.addEventListener('click', copyReviewPreviewUrls);
+  els.reviewCopyDeletedPages.addEventListener('click', copyReviewDeletedPages);
   els.reviewPreviewPublish.addEventListener('click', openHelix6Modal);
   els.contentSegmentPreview.addEventListener('click', () => {
     if (browseContentMode !== 'preview') {

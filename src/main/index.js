@@ -69,7 +69,7 @@ import {
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
 } from './da-sync.js';
-import { runHelix6BulkWorkflow } from './helix6-bulk.js';
+import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
 import { startRumProxy } from './rum-proxy.js';
 import log from './logger.js';
 
@@ -444,6 +444,10 @@ ipcMain.handle('preview:build-aem-urls', async (_event, { siteId, daPaths }) => 
   }
   return daPaths.map((daPath) => buildPreviewUrl(site.previewUrl, daPath));
 });
+
+ipcMain.handle('helix6:bulk-paths', async (_event, { daPaths }) => (
+  daPathsToBulkPaths(daPaths)
+));
 
 ipcMain.handle('sites:list', async () => {
   await ensureSitesLoaded();
@@ -960,7 +964,7 @@ ipcMain.handle('push:diffs', async (_event, {
 });
 
 ipcMain.handle('helix6:run-bulk', async (event, {
-  siteId, daPaths, mode,
+  siteId, daPaths, deletedDaPaths, mode,
 }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -983,7 +987,8 @@ ipcMain.handle('helix6:run-bulk', async (event, {
         client,
         org: site.org,
         repo: site.repo,
-        daPaths,
+        daPaths: daPaths || [],
+        deletedDaPaths: deletedDaPaths || [],
         mode,
         signal,
         onProgress: (data) => {
