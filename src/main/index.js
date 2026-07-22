@@ -28,8 +28,9 @@ import {
 import { ContentApiClient } from './content-api-client.js';
 import { buildFetchFailureError, HttpRequestError } from './http-request-error.js';
 import {
-  DA_TOKEN_FILENAME, getAuthStatus, getValidToken, loadStoredToken,
+  DA_TOKEN_FILENAME, getAuthStatus, loadStoredToken,
 } from './da-auth.js';
+import { DA_LOGIN_PARTITION, performDaLogin } from './da-login.js';
 import {
   describeTokenDiagnostics,
   invalidateDaSession,
@@ -246,7 +247,7 @@ async function invalidateCurrentDaSession() {
     tokenPath: tokenPath(),
     siteTokensPath: siteTokensPath(),
     electronSession: session,
-    partitions: [PREVIEW_WEBVIEW_PARTITION, PREVIEW_LOGIN_PARTITION],
+    partitions: [PREVIEW_WEBVIEW_PARTITION, PREVIEW_LOGIN_PARTITION, DA_LOGIN_PARTITION],
     clearContentAuthCache: () => contentDaLiveAuth?.clearCache(),
     clearPreviewCaches: () => previewRegistry?.clearHeadCache(),
     resetSiteTokensCache: () => {
@@ -471,9 +472,11 @@ ipcMain.handle('sites:remove', async (_event, { id }) => {
 ipcMain.handle('da:auth-status', async () => getAuthStatus(tokenPath()));
 
 ipcMain.handle('da:login', async () => {
-  await getValidToken({
+  await performDaLogin({
     tokenPath: tokenPath(),
-    openBrowser: (url) => shell.openExternal(url),
+    parent: mainWindow ?? undefined,
+    electronSession: session,
+    log,
   });
   contentDaLiveAuth?.clearCache();
   return getAuthStatus(tokenPath());

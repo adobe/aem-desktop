@@ -1385,7 +1385,7 @@ async function handleSignOut() {
 
 async function handleSignIn() {
   els.signInBtn.disabled = true;
-  els.authStatus.textContent = 'Signing in…';
+  els.authStatus.textContent = 'Signing in… choose your Adobe org when prompted';
   try {
     const status = await window.aemDesktop.loginDa();
     state.authenticated = status.authenticated;
