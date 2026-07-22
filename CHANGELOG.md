@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/adobe/aem-desktop/compare/v1.9.0...v1.9.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* use in-app IMS login so users can choose Adobe org ([e924132](https://github.com/adobe/aem-desktop/commit/e924132267a87a37b107646b4f85e2b856cade06))
+
 # [1.9.0](https://github.com/adobe/aem-desktop/compare/v1.8.0...v1.9.0) (2026-07-15)
 
 
