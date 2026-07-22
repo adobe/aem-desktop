@@ -61,15 +61,19 @@ export async function saveToken(tokenPath, tokenData) {
 /**
  * Builds the IMS authorize URL for the implicit OAuth flow.
  *
+ * @param {{ prompt?: 'login'|'none' }} [options]
  * @returns {string}
  */
-export function buildAuthUrl() {
+export function buildAuthUrl({ prompt } = {}) {
   const params = new URLSearchParams({
     response_type: 'token',
     client_id: CLIENT_ID,
     scope: SCOPE,
     redirect_uri: REDIRECT_URI,
   });
+  if (prompt) {
+    params.set('prompt', prompt);
+  }
   return `${IMS_ORIGIN}/ims/authorize/v2?${params}`;
 }
 

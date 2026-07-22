@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   clearStoredToken,
+  buildAuthUrl,
   getAuthStatus,
   isTokenExpired,
   logout,
@@ -26,6 +27,13 @@ test('isTokenExpired treats missing token as expired', () => {
   assert.equal(isTokenExpired(null), true);
   assert.equal(isTokenExpired({ access_token: 'abc', expires_at: Date.now() - 1000 }), true);
   assert.equal(isTokenExpired({ access_token: 'abc', expires_at: Date.now() + 3600_000 }), false);
+});
+
+test('buildAuthUrl adds prompt when requested', () => {
+  const url = new URL(buildAuthUrl({ prompt: 'login' }));
+  assert.equal(url.searchParams.get('prompt'), 'login');
+  assert.equal(url.searchParams.get('client_id'), 'darkalley');
+  assert.equal(new URL(buildAuthUrl()).searchParams.has('prompt'), false);
 });
 
 test('logout clears stored token', async () => {
