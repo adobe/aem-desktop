@@ -98,8 +98,23 @@ export function performDaLogin({
         },
       });
 
-      const guardNavigation = (label) => (event, url) => {
+      // Allow any https origin so the full IMS/IdP redirect chain (Okta, device
+      // trust, MFA, regional shards, …) can resolve — enumerating every hop is
+      // brittle. The localhost:9898 token callback stays explicitly pinned via
+      // isAllowedDaLoginNavigation, and window.open is denied below, so this
+      // only widens *where the window may navigate*, not what it can do.
+      const isAllowedNavigation = (url) => {
         if (isAllowedDaLoginNavigation(url)) {
+          return true;
+        }
+        try {
+          return new URL(url).protocol === 'https:';
+        } catch {
+          return false;
+        }
+      };
+      const guardNavigation = (label) => (event, url) => {
+        if (isAllowedNavigation(url)) {
           scope?.info?.(`${label} ${new URL(url).origin}`);
         } else {
           event.preventDefault();
