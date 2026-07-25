@@ -1,3 +1,10 @@
+## [1.9.2](https://github.com/adobe/aem-desktop/compare/v1.9.1...v1.9.2) (2026-07-25)
+
+
+### Bug Fixes
+
+* allow any https hop in IMS login so federated SSO can complete ([2e5aa8b](https://github.com/adobe/aem-desktop/commit/2e5aa8b233c25008a0e9260039f07cb56147a850))
+
 ## [1.9.1](https://github.com/adobe/aem-desktop/compare/v1.9.0...v1.9.1) (2026-07-22)
 
 
