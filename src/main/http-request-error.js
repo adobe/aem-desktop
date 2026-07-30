@@ -65,6 +65,9 @@ export function composeHttpErrorMessage({
   if (status === 403) {
     messageParts.push('Forbidden — verify your token has access to this org/repo.');
   }
+  if (status === 429) {
+    messageParts.push('Rate limited — try again shortly.');
+  }
   return messageParts.join(' — ');
 }
 

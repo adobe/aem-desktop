@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   API_BACKEND_DA_LIVE,
   buildPostUploadRequest,
+  contentTypeForUpload,
   DA_UNAUTHORIZED_MESSAGE,
   isDaUnauthorizedError,
   normalizeDaPath,
@@ -35,6 +36,13 @@ test('buildPostUploadRequest sets filename from daPath for da.live', () => {
     '/blog/post.html',
   );
   assert.ok(body instanceof FormData);
+});
+
+test('contentTypeForUpload maps SVG to image/svg+xml', () => {
+  assert.equal(contentTypeForUpload('/icons/admin.svg'), 'image/svg+xml');
+  assert.equal(contentTypeForUpload('/hero.png'), 'image/png');
+  assert.equal(contentTypeForUpload('/page.html'), 'text/html');
+  assert.equal(contentTypeForUpload('/noext'), 'application/octet-stream');
 });
 
 test('isDaUnauthorizedError detects API and IPC-wrapped unauthorized errors', () => {

@@ -36,6 +36,10 @@ import {
   buildHttpError,
   HttpRequestError,
 } from './http-request-error.js';
+import {
+  withRateLimitRetry,
+  withRequestPacer,
+} from './http-rate-limit.js';
 
 const LIST_MAX_PAGES = 50000;
 
@@ -59,6 +63,23 @@ function withNetworkErrorDetail(fetchImpl) {
       throw buildFetchFailureError(init?.method || 'GET', String(url), err);
     }
   };
+}
+
+/**
+ * Applies shared HTTP hardening: network error detail, 429 retries, and for
+ * helix6 (api.aem.live) a request pacer under the admin API 10 req/s limit.
+ *
+ * @param {typeof fetch} fetchImpl
+ * @param {string} backend
+ * @returns {typeof fetch}
+ */
+function wrapContentApiFetch(fetchImpl, backend) {
+  let next = withNetworkErrorDetail(fetchImpl);
+  next = withRateLimitRetry(next);
+  if (backend === API_BACKEND_AEM_API) {
+    next = withRequestPacer(next);
+  }
+  return next;
 }
 
 /**
@@ -87,7 +108,7 @@ export class ContentApiClient {
   constructor(token, backend = API_BACKEND_DA_LIVE, fetchImpl = globalThis.fetch) {
     this.token = token;
     this.backend = isValidApiBackend(backend) ? backend : API_BACKEND_DA_LIVE;
-    this.fetch = withNetworkErrorDetail(fetchImpl);
+    this.fetch = wrapContentApiFetch(fetchImpl, this.backend);
   }
 
   get authHeader() {
