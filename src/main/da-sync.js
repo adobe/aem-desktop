@@ -18,13 +18,15 @@ import {
 import { toDaPath } from './aem-page-url.js';
 import { prettyPrintHtml } from './pretty-print.js';
 import { myersDiff, buildHunks } from './diff.js';
+import { contentTypeForUpload } from './content-api-shared.js';
 
 const TEXT_EXTENSIONS = new Set([
   'html', 'htm', 'json', 'css', 'js', 'mjs', 'xml', 'txt', 'md',
   'svg', 'yaml', 'yml', 'csv', 'tsv',
 ]);
 
-const CONCURRENCY = 10;
+/** Parallel sync ops per batch. Kept below the admin API 10 req/s ceiling. */
+const CONCURRENCY = 5;
 
 /**
  * @param {string|undefined} ext
@@ -1172,38 +1174,6 @@ export async function runRevert({
   return { reverted: total };
 }
 
-const MIME_BY_EXT = {
-  html: 'text/html',
-  htm: 'text/html',
-  json: 'application/json',
-  css: 'text/css',
-  js: 'application/javascript',
-  mjs: 'application/javascript',
-  xml: 'application/xml',
-  txt: 'text/plain',
-  md: 'text/markdown',
-  svg: 'image/svg+xml',
-  yaml: 'text/yaml',
-  yml: 'text/yaml',
-  csv: 'text/csv',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  mp4: 'video/mp4',
-  pdf: 'application/pdf',
-};
-
-function guessMime(daPath) {
-  const dot = daPath.lastIndexOf('.');
-  if (dot < 0) {
-    return 'application/octet-stream';
-  }
-  const ext = daPath.slice(dot + 1).toLowerCase();
-  return MIME_BY_EXT[ext] || 'application/octet-stream';
-}
-
 /**
  * Pushes local changes (modified, new, deleted) to the remote DA.
  *
@@ -1238,7 +1208,7 @@ export async function runPush({
     await Promise.all(batch.map(async (daPath) => { // eslint-disable-line no-await-in-loop
       const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
       const buf = await readFile(workingPath);
-      const mime = guessMime(daPath);
+      const mime = contentTypeForUpload(daPath);
       await client.uploadSource(org, repo, daPath, buf, mime);
 
       await mkdir(dirname(originalPath), { recursive: true });
@@ -1304,7 +1274,7 @@ export async function runPush({
     const serverModified = remoteMeta.get(daPath) || new Date().toISOString();
     manifestMap.set(daPath, {
       daPath,
-      contentType: guessMime(daPath),
+      contentType: contentTypeForUpload(daPath),
       lastModified: serverModified,
       size: s.size,
     });

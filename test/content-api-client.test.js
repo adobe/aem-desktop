@@ -186,3 +186,35 @@ test('uploadSource uses multipart POST for da.live on PUT 400', async () => {
   const client = new ContentApiClient('token', API_BACKEND_DA_LIVE, fetchImpl);
   await client.uploadSource('org', 'site', '/test.html', Buffer.from('<p>hi</p>'), 'text/html');
 });
+
+test('helix6 client retries on 429 then lists successfully', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response('rate limited', {
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: { 'Retry-After': '0' },
+      });
+    }
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const client = new ContentApiClient('token', API_BACKEND_AEM_API, fetchImpl);
+  const entries = await client.listAemApi('org', 'site', '/');
+  assert.deepEqual(entries, []);
+  assert.equal(calls, 2);
+});
+
+test('composeHttpErrorMessage explains 429 after retries are exhausted', () => {
+  const message = composeHttpErrorMessage({
+    method: 'GET',
+    url: 'https://api.aem.live/org/sites/site/source/',
+    status: 429,
+    statusText: 'Too Many Requests',
+  });
+  assert.match(message, /Rate limited/);
+});

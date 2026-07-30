@@ -85,3 +85,50 @@ export function buildPostUploadRequest(backend, data, contentType, daPath) {
   form.append('data', new Blob([bytes], { type: contentType }), name);
   return { headers: {}, body: form };
 }
+
+/**
+ * MIME types used when uploading to da.live / api.aem.live source.
+ * SVG uses image/svg+xml (helix-api-service CONTENT_TYPES); the source API
+ * derives type from the path extension, not the request Content-Type.
+ *
+ * @see https://www.aem.live/docs/api.html (Create / Replace document Content-Type)
+ */
+const UPLOAD_MIME_BY_EXT = {
+  html: 'text/html',
+  htm: 'text/html',
+  json: 'application/json',
+  css: 'text/css',
+  js: 'application/javascript',
+  mjs: 'application/javascript',
+  xml: 'application/xml',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  svg: 'image/svg+xml',
+  yaml: 'text/yaml',
+  yml: 'text/yaml',
+  csv: 'text/csv',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+  mp4: 'video/mp4',
+  pdf: 'application/pdf',
+};
+
+/**
+ * Content-Type for a source upload path.
+ *
+ * @param {string} daPath
+ * @returns {string}
+ */
+export function contentTypeForUpload(daPath) {
+  const normalized = normalizeDaPath(daPath);
+  const dot = normalized.lastIndexOf('.');
+  if (dot < 0) {
+    return 'application/octet-stream';
+  }
+  const ext = normalized.slice(dot + 1).toLowerCase();
+  return UPLOAD_MIME_BY_EXT[ext] || 'application/octet-stream';
+}
