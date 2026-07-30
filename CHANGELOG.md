@@ -1,3 +1,10 @@
+## [1.9.3](https://github.com/adobe/aem-desktop/compare/v1.9.2...v1.9.3) (2026-07-30)
+
+
+### Bug Fixes
+
+* handle AEM admin API rate limits (429) during content sync ([512aa7a](https://github.com/adobe/aem-desktop/commit/512aa7a7c86b38e143e803624298e814047692ec))
+
 ## [1.9.2](https://github.com/adobe/aem-desktop/compare/v1.9.1...v1.9.2) (2026-07-25)
 
 
