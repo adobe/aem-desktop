@@ -1085,6 +1085,58 @@ export async function checkPushStatus({ destRoot, org, repo }) {
 }
 
 /**
+ * Whether a connection has any locally synced content on disk (working copy,
+ * `.aem` originals, or manifest). Used to decide the overview remove control:
+ * a plain remove (×) when empty vs. a delete-content action (trash) when not.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<boolean>}
+ */
+export async function hasLocalContent({ destRoot, org, repo }) {
+  if (!destRoot) {
+    return false;
+  }
+  try {
+    const entries = await readdir(syncRoot(destRoot, org, repo));
+    return entries.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Local-content summary for the overview list: whether any content is synced
+ * and how many uncommitted local changes (modified + new + deleted) exist.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<{ hasContent: boolean, changeCount: number }>}
+ */
+export async function localContentSummary({ destRoot, org, repo }) {
+  if (!(await hasLocalContent({ destRoot, org, repo }))) {
+    return { hasContent: false, changeCount: 0 };
+  }
+  const { modified, localNew, deleted } = await checkPushStatus({ destRoot, org, repo });
+  return {
+    hasContent: true,
+    changeCount: modified.length + localNew.length + deleted.length,
+  };
+}
+
+/**
+ * Removes a connection's entire local sync directory (working copy, `.aem`
+ * originals, and manifest). No-op when nothing is synced.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<void>}
+ */
+export async function deleteLocalContent({ destRoot, org, repo }) {
+  if (!destRoot) {
+    return;
+  }
+  await rm(syncRoot(destRoot, org, repo), { recursive: true, force: true });
+}
+
+/**
  * @param {string} targetPath
  * @param {{ lastModified?: string }|undefined} manifestEntry
  * @param {string} fallbackMtimePath

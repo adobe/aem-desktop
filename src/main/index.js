@@ -69,7 +69,9 @@ import {
   collectFolder, isBinaryExtension,
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
+  localContentSummary, deleteLocalContent,
 } from './da-sync.js';
+import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
 import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
 import { startRumProxy } from './rum-proxy.js';
 import log from './logger.js';
@@ -467,6 +469,49 @@ ipcMain.handle('sites:remove', async (_event, { id }) => {
   const next = removeSite(sites, id);
   await persistSites(next);
   return next;
+});
+
+ipcMain.handle('sites:local-content', async (_event, { destFolder }) => {
+  const sites = await ensureSitesLoaded();
+  const entries = await Promise.all(sites.map(async (site) => [
+    site.id,
+    await localContentSummary({ destRoot: destFolder, org: site.org, repo: site.repo }),
+  ]));
+  return Object.fromEntries(entries);
+});
+
+ipcMain.handle('sites:delete-local', async (_event, { id, destFolder }) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, id);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  const { hasContent, changeCount } = await localContentSummary({
+    destRoot: destFolder, org: site.org, repo: site.repo,
+  });
+  if (!hasContent) {
+    return { deleted: false };
+  }
+
+  const { message, detail } = buildDeleteLocalPrompt({
+    org: site.org, repo: site.repo, changeCount,
+  });
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['Cancel', 'Delete'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Delete Synced Content',
+    message,
+    detail,
+  });
+  if (response !== 1) {
+    return { deleted: false };
+  }
+
+  await deleteLocalContent({ destRoot: destFolder, org: site.org, repo: site.repo });
+  return { deleted: true };
 });
 
 ipcMain.handle('da:auth-status', async () => getAuthStatus(tokenPath()));

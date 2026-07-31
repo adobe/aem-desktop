@@ -20,6 +20,7 @@ import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
   evaluatePullStatus, runPull,
+  hasLocalContent, localContentSummary, deleteLocalContent,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -418,6 +419,69 @@ test('runPull removes locally synced files deleted on the remote', async () => {
     const manifest = JSON.parse(await readFile(join(aemDir, 'manifest.json'), 'utf8'));
     assert.deepEqual(manifest.files.map((f) => f.daPath), ['/stay.html']);
     assert.equal(progress.at(-1)?.phase, 'done');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('hasLocalContent reflects presence of a synced directory', async () => {
+  assert.equal(await hasLocalContent({ destRoot: null, org: 'o', repo: 'r' }), false);
+
+  const dest = join(tmpdir(), `aem-sync-test-${Date.now()}-has`);
+  try {
+    assert.equal(await hasLocalContent({ destRoot: dest, org: 'o', repo: 'r' }), false);
+    await mkdir(join(dest, 'o', 'r', '.aem'), { recursive: true });
+    await writeFile(join(dest, 'o', 'r', '.aem', 'manifest.json'), '{"files":[]}');
+    assert.equal(await hasLocalContent({ destRoot: dest, org: 'o', repo: 'r' }), true);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('localContentSummary counts uncommitted local changes', async () => {
+  const dest = join(tmpdir(), `aem-sync-test-${Date.now()}-summary`);
+  const aemDir = join(dest, 'o', 'r', '.aem');
+  const workDir = join(dest, 'o', 'r');
+  try {
+    // No content synced yet.
+    let summary = await localContentSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(summary, { hasContent: false, changeCount: 0 });
+
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      files: [{ daPath: '/a.html' }, { daPath: '/b.html' }],
+    }));
+    // a.html modified locally, b.html unchanged, c.html is new/local-only.
+    await writeFile(join(aemDir, 'a.html'), 'original');
+    await writeFile(join(workDir, 'a.html'), 'changed');
+    await writeFile(join(aemDir, 'b.html'), 'same');
+    await writeFile(join(workDir, 'b.html'), 'same');
+    await writeFile(join(workDir, 'c.html'), 'brand new');
+
+    summary = await localContentSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.equal(summary.hasContent, true);
+    assert.equal(summary.changeCount, 2); // modified a.html + new c.html
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('deleteLocalContent removes the connection sync directory only', async () => {
+  const dest = join(tmpdir(), `aem-sync-test-${Date.now()}-del`);
+  try {
+    await mkdir(join(dest, 'o', 'r', '.aem'), { recursive: true });
+    await writeFile(join(dest, 'o', 'r', 'index.html'), 'hi');
+    // A second connection under the same sync folder must survive.
+    await mkdir(join(dest, 'o', 'other'), { recursive: true });
+    await writeFile(join(dest, 'o', 'other', 'keep.html'), 'keep');
+
+    await deleteLocalContent({ destRoot: dest, org: 'o', repo: 'r' });
+
+    await assert.rejects(stat(join(dest, 'o', 'r')));
+    await stat(join(dest, 'o', 'other', 'keep.html'));
+
+    // Deleting again is a no-op, not an error.
+    await deleteLocalContent({ destRoot: dest, org: 'o', repo: 'r' });
   } finally {
     await rm(dest, { recursive: true, force: true });
   }

@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   listSites: () => ipcRenderer.invoke('sites:list'),
   addSite: (url, apiBackend) => ipcRenderer.invoke('sites:add', { url, apiBackend }),
   removeSite: (id) => ipcRenderer.invoke('sites:remove', { id }),
+  getSitesLocalContent: (destFolder) => ipcRenderer.invoke('sites:local-content', { destFolder }),
+  deleteSiteLocalContent: (id, destFolder) => ipcRenderer.invoke(
+    'sites:delete-local',
+    { id, destFolder },
+  ),
 
   getDaAuthStatus: () => ipcRenderer.invoke('da:auth-status'),
   loginDa: () => ipcRenderer.invoke('da:login'),

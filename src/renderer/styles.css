@@ -382,6 +382,24 @@ body {
   color: var(--accent);
 }
 
+.delete-site {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  color: var(--muted);
+}
+
+.delete-site:hover {
+  color: var(--accent);
+}
+
+.delete-site svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 .empty-note {
   font-size: 0.85rem;
   color: var(--muted);

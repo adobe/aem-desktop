@@ -234,6 +234,7 @@ function trackShellPageView(overrides = {}) {
 function goHome() {
   showView('home');
   renderSites();
+  refreshSiteContent();
   trackShellPageView();
 }
 
@@ -1315,18 +1316,80 @@ function renderSites() {
     btn.innerHTML = `<span class="site-name">${siteLabel(site)}</span><span class="site-branch">${site.branch}</span>`;
     btn.addEventListener('click', () => selectSite(site.id));
 
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'btn-icon remove-site';
-    removeBtn.title = 'Remove site';
-    removeBtn.textContent = '×';
+    li.append(btn, buildSiteRemoveControl(site));
+    els.siteList.append(li);
+  }
+}
+
+const TRASH_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">'
+  + '<path fill="currentColor" d="M7.5 2a1 1 0 0 0-1 1v.5H3.75a.75.75 0 0 0 0 1.5h.56l.83 10.13'
+  + 'A2 2 0 0 0 7.13 18h5.74a2 2 0 0 0 1.99-1.87L15.69 5h.56a.75.75 0 0 0 0-1.5H13.5V3a1 1 0 0 '
+  + '0-1-1h-5Zm4 1.5h-3V3h3v.5ZM8.5 7.5a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 '
+  + '8.5 7.5Zm3.75.75a.75.75 0 0 0-1.5 0v5a.75.75 0 0 0 1.5 0v-5Z"/></svg>';
+
+/**
+ * Builds the per-connection remove control: a trash button that deletes locally
+ * synced content when the connection has any, otherwise the plain × that
+ * removes the connection outright.
+ *
+ * @param {{ id: string }} site
+ * @returns {HTMLButtonElement}
+ */
+function buildSiteRemoveControl(site) {
+  const summary = siteContent[site.id];
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+
+  if (summary?.hasContent) {
+    removeBtn.className = 'btn-icon delete-site';
+    removeBtn.title = summary.changeCount > 0
+      ? 'Delete locally synced content (has unpushed changes)'
+      : 'Delete locally synced content';
+    removeBtn.innerHTML = TRASH_ICON;
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      removeSite(site.id);
+      deleteSiteContent(site.id);
     });
+    return removeBtn;
+  }
 
-    li.append(btn, removeBtn);
-    els.siteList.append(li);
+  removeBtn.className = 'btn-icon remove-site';
+  removeBtn.title = 'Remove site';
+  removeBtn.textContent = '×';
+  removeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeSite(site.id);
+  });
+  return removeBtn;
+}
+
+/**
+ * Refreshes the cached synced-content summary for every connection, then
+ * re-renders the list so trash/× controls reflect current on-disk state.
+ */
+async function refreshSiteContent() {
+  if (state.sites.length === 0) {
+    siteContent = {};
+    return;
+  }
+  try {
+    siteContent = await window.aemDesktop.getSitesLocalContent(syncFolder) || {};
+  } catch {
+    siteContent = {};
+  }
+  renderSites();
+}
+
+/**
+ * Prompts (in the main process) to delete a connection's locally synced
+ * content. The connection itself stays; on success the row reverts to ×.
+ *
+ * @param {string} siteId
+ */
+async function deleteSiteContent(siteId) {
+  const result = await window.aemDesktop.deleteSiteLocalContent(siteId, syncFolder);
+  if (result?.deleted) {
+    await refreshSiteContent();
   }
 }
 
@@ -1339,6 +1402,7 @@ async function loadSites() {
     }
   }
   renderSites();
+  await refreshSiteContent();
   if (state.view === 'browse' && state.activeSiteId) {
     await refreshTree();
   }
@@ -1403,6 +1467,9 @@ async function handleSignIn() {
 }
 
 let syncFolder = null;
+// siteId -> { hasContent: boolean, changeCount: number }; drives the overview
+// remove control (× to remove the connection vs. trash to delete local content).
+let siteContent = {};
 let syncing = false;
 let syncedPath = null;
 let syncConflicts = [];
