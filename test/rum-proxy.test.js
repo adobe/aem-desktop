@@ -11,6 +11,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { gzipSync } from 'node:zlib';
 import {
   rewriteRumBeaconBody,
   shouldRewriteRumReferer,
@@ -102,6 +103,33 @@ test('rum proxy forwards GET script requests to rum.hlx.page', async () => {
     );
     assert.equal(resp.status, 200);
     assert.match(upstreamUrl, /^https:\/\/rum\.hlx\.page\/\.rum\//);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test('rum proxy keeps content-encoding so gzip upstream scripts stay decodable', async () => {
+  const source = 'export const rum = () => {};\n';
+  const proxy = await startRumProxy({
+    // rum.hlx.page returns pre-gzipped JS even without accept-encoding; the raw
+    // https upstream fetch pipes those bytes through undecoded.
+    fetchFn: async () => new Response(gzipSync(Buffer.from(source)), {
+      status: 200,
+      headers: {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-encoding': 'gzip',
+      },
+    }),
+  });
+
+  try {
+    const resp = await fetch(
+      `${proxy.baseUrl}/.rum/@adobe/helix-rum-js@2/dist/rum-standalone.js`,
+    );
+    assert.equal(resp.status, 200);
+    assert.equal(resp.headers.get('content-encoding'), 'gzip');
+    // fetch (undici) decodes the gzip stream because the header was preserved.
+    assert.equal(await resp.text(), source);
   } finally {
     await proxy.close();
   }
