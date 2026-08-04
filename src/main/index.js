@@ -69,7 +69,7 @@ import {
   collectFolder, isBinaryExtension,
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
-  localContentSummary, deleteLocalContent,
+  localContentSummary, deleteLocalContent, pruneSelectionForListing,
 } from './da-sync.js';
 import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
 import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
@@ -712,7 +712,9 @@ ipcMain.handle('sync:check', async (event, {
       }
     };
 
-    for (const item of items) {
+    // Drop selections nested under another selected folder so overlapping
+    // multi-selections don't list the same subtree (and re-count) repeatedly.
+    for (const item of pruneSelectionForListing(items)) {
       if (item.isFolder) {
         const base = allFiles.length;
         // eslint-disable-next-line no-await-in-loop

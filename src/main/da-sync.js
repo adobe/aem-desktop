@@ -702,6 +702,42 @@ export async function checkPullStatus({
 }
 
 /**
+ * Removes selection entries that are redundant for a recursive listing/sync:
+ * anything nested under another selected folder (already covered by that
+ * folder's recursive walk) plus exact duplicates. Without this, overlapping
+ * selections list/download the same subtrees repeatedly — hammering the admin
+ * API (429s) and inflating progress counts.
+ *
+ * @template {{ daPath: string, isFolder?: boolean }} T
+ * @param {T[]} items
+ * @returns {T[]}
+ */
+export function pruneSelectionForListing(items) {
+  const folderPaths = items.filter((i) => i.isFolder).map((i) => i.daPath);
+  const isUnderSelectedFolder = (daPath) => folderPaths.some((folder) => {
+    if (folder === daPath) {
+      return false;
+    }
+    const prefix = folder === '/' ? '/' : `${folder}/`;
+    return daPath.startsWith(prefix);
+  });
+
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    if (seen.has(item.daPath)) {
+      continue; // eslint-disable-line no-continue
+    }
+    seen.add(item.daPath);
+    if (isUnderSelectedFolder(item.daPath)) {
+      continue; // eslint-disable-line no-continue
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
  * Recursively collects all files under a DA folder (up to CONCURRENCY parallel list calls).
  *
  * @param {import('./content-api-client.js').ContentApiClient} client
@@ -852,7 +888,7 @@ export async function runSync({
   onProgress({ phase: 'listing', completed: 0, total: 0 });
 
   const filesToSync = [];
-  for (const item of items) {
+  for (const item of pruneSelectionForListing(items)) {
     if (signal?.aborted) {
       throw new Error('Sync cancelled');
     }

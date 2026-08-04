@@ -21,6 +21,7 @@ import {
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
   evaluatePullStatus, runPull,
   hasLocalContent, localContentSummary, deleteLocalContent,
+  pruneSelectionForListing,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -550,4 +551,46 @@ test('deleteLocalContent removes the connection sync directory only', async () =
   } finally {
     await rm(dest, { recursive: true, force: true });
   }
+});
+
+test('pruneSelectionForListing drops items nested under a selected folder', () => {
+  const items = [
+    { daPath: '/products', isFolder: true },
+    { daPath: '/products/shoes', isFolder: true },
+    { daPath: '/products/shoes/a.html', isFolder: false },
+    { daPath: '/about.html', isFolder: false },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/products', '/about.html']);
+});
+
+test('pruneSelectionForListing keeps sibling folders and removes duplicates', () => {
+  const items = [
+    { daPath: '/blog', isFolder: true },
+    { daPath: '/news', isFolder: true },
+    { daPath: '/blog', isFolder: true },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/blog', '/news']);
+});
+
+test('pruneSelectionForListing does not treat name-prefix siblings as nested', () => {
+  // '/foo-bar' is not under '/foo' — only '/foo/…' is.
+  const items = [
+    { daPath: '/foo', isFolder: true },
+    { daPath: '/foo-bar', isFolder: true },
+    { daPath: '/foo/child.html', isFolder: false },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/foo', '/foo-bar']);
+});
+
+test('pruneSelectionForListing collapses everything under a selected root', () => {
+  const items = [
+    { daPath: '/', isFolder: true },
+    { daPath: '/a', isFolder: true },
+    { daPath: '/a/b.html', isFolder: false },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/']);
 });
