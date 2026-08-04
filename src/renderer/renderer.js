@@ -1171,7 +1171,7 @@ async function refreshLocalBadgesForFolder(daPath) {
   }
   const siteId = state.activeSiteId;
   try {
-    const { badges } = await window.aemDesktop.getLocalSyncBadges({
+    const { badges, localFolders } = await window.aemDesktop.getLocalSyncBadges({
       siteId,
       destFolder: syncFolder,
       folderPath: daPath,
@@ -1185,7 +1185,9 @@ async function refreshLocalBadgesForFolder(daPath) {
       return;
     }
     mergeSyncBadges(badges);
+    injectLocalFoldersForFolder(daPath, localFolders);
     injectLocalFilesForFolder(daPath);
+    paintFileTree();
   } catch {
     // ignore
   }
@@ -1998,6 +2000,31 @@ function injectLocalFilesForFolder(folderPath) {
     const parent = lastSlash > 0 ? p.slice(0, lastSlash) : '/';
     if (parent === folderPath) {
       injectLocalFile(p);
+    }
+  }
+}
+
+function injectLocalFolder(daPath) {
+  const lastSlash = daPath.lastIndexOf('/');
+  const parentPath = lastSlash > 0 ? daPath.slice(0, lastSlash) : '/';
+  const name = daPath.slice(lastSlash + 1);
+
+  const folder = state.tree.cache[parentPath];
+  if (!folder) {
+    return;
+  }
+  if (folder.some((item) => item.daPath === daPath)) {
+    return;
+  }
+  folder.push({ name, daPath, isFolder: true });
+}
+
+function injectLocalFoldersForFolder(folderPath, localFolders = []) {
+  for (const daPath of localFolders) {
+    const lastSlash = daPath.lastIndexOf('/');
+    const parent = lastSlash > 0 ? daPath.slice(0, lastSlash) : '/';
+    if (parent === folderPath) {
+      injectLocalFolder(daPath);
     }
   }
 }

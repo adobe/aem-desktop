@@ -308,6 +308,71 @@ test('checkLocalSyncBadges classifies listed files from manifest', async () => {
   }
 });
 
+test('checkLocalSyncBadges surfaces local-only folders as new', async () => {
+  const dest = join(tmpdir(), `aem-local-folder-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  try {
+    // A brand-new local folder that exists only on disk (not in the remote
+    // listing), with a file inside it.
+    await mkdir(join(workDir, 'drafts'), { recursive: true });
+    await writeFile(join(workDir, 'drafts', 'post.html'), 'draft');
+
+    const { localFolders, badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/',
+      items: [], // remote listing has no such folder
+    });
+
+    assert.deepEqual(localFolders, ['/drafts']);
+    assert.equal(badges['/drafts'], 'new');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('checkLocalSyncBadges does not duplicate folders present in the remote listing', async () => {
+  const dest = join(tmpdir(), `aem-local-folder-dup-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  try {
+    await mkdir(join(workDir, 'docs'), { recursive: true });
+
+    const { localFolders, badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/',
+      items: [{ daPath: '/docs', isFolder: true }], // already listed remotely
+    });
+
+    assert.deepEqual(localFolders, []);
+    assert.equal(badges['/docs'], undefined);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('checkLocalSyncBadges lists local-only child folders of a subfolder', async () => {
+  const dest = join(tmpdir(), `aem-local-folder-nested-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  try {
+    await mkdir(join(workDir, 'blog', 'drafts'), { recursive: true });
+
+    const { localFolders } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/blog',
+      items: [],
+    });
+
+    assert.deepEqual(localFolders, ['/blog/drafts']);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
 test('evaluatePullStatus finds outdated and conflict files', async () => {
   const dest = join(tmpdir(), `aem-pull-test-${Date.now()}`);
   const workDir = join(dest, 'o', 'r');

@@ -145,6 +145,30 @@ async function walkLocalDir(dir) {
 }
 
 /**
+ * Names of immediate child directories of a local folder, skipping `.aem` and
+ * dotfiles/dotdirs (mirrors {@link walkLocalDir}'s skip rules). Used to surface
+ * local-only folders that have no remote listing entry yet.
+ *
+ * @param {string} dir
+ * @returns {Promise<string[]>}
+ */
+async function listLocalChildDirs(dir) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const dirs = [];
+  for (const entry of entries) {
+    if (entry.isDirectory() && entry.name !== '.aem' && !entry.name.startsWith('.')) {
+      dirs.push(entry.name);
+    }
+  }
+  return dirs;
+}
+
+/**
  * Lists folder daPaths that have a corresponding directory under `.aem`
  * (i.e. content from that folder has been synced at least once).
  *
@@ -265,10 +289,13 @@ export async function checkLocalSyncBadges({
 
   await Promise.all(itemChecks);
 
+  /** @type {string[]} */
+  const localFolders = [];
   if (folderPath !== undefined) {
     const root = syncRoot(destRoot, org, repo);
     const segs = folderPath === '/' ? [] : folderPath.split('/').filter(Boolean);
     const localDir = join(root, ...segs);
+
     const localFiles = await walkLocalDir(localDir);
     for (const localPath of localFiles) {
       const rel = relative(root, localPath);
@@ -277,9 +304,25 @@ export async function checkLocalSyncBadges({
         badges[daPath] = 'new';
       }
     }
+
+    // Surface local-only child folders (created on disk but not in the remote
+    // listing) so they appear in the tree and can be expanded. Folders already
+    // in the remote listing are skipped; genuinely local ones are badged 'new'.
+    const remotePaths = new Set(items.map((item) => item.daPath));
+    const base = folderPath === '/' ? '' : folderPath;
+    for (const childName of await listLocalChildDirs(localDir)) {
+      const daPath = `${base}/${childName}`;
+      if (remotePaths.has(daPath)) {
+        continue; // eslint-disable-line no-continue
+      }
+      localFolders.push(daPath);
+      if (!badges[daPath]) {
+        badges[daPath] = 'new';
+      }
+    }
   }
 
-  return { syncedFolders, badges };
+  return { syncedFolders, badges, localFolders };
 }
 
 /**
