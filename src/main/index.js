@@ -74,6 +74,7 @@ import {
 import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
 import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
 import { startRumProxy } from './rum-proxy.js';
+import { withRequestLogging } from './http-log.js';
 import log from './logger.js';
 
 // Use the basic (plaintext) Chromium password store instead of the macOS
@@ -335,6 +336,17 @@ const chromiumFetch = async (url, init) => {
   }
 };
 
+// Log content-API requests (method, URL, status, timing) when running from a
+// terminal (dev, or a packaged app launched from a shell) — off for a normal
+// double-clicked packaged app so it stays quiet. Applied beneath the client's
+// rate-limit/pacer wrappers so lines reflect actual network hits, including
+// 429s and retries.
+const API_REQUEST_LOG_ENABLED = !app.isPackaged || process.stdout.isTTY === true;
+const apiFetch = withRequestLogging(chromiumFetch, {
+  logger: log.scope('api'),
+  enabled: API_REQUEST_LOG_ENABLED,
+});
+
 async function withContentClient(site, fn) {
   const backend = site.apiBackend || API_BACKEND_DA_LIVE;
   try {
@@ -342,7 +354,7 @@ async function withContentClient(site, fn) {
     // missing/expired token throws an unauthorized error with the reason,
     // and the renderer routes the user to the explicit Sign in button.
     const accessToken = await resolveStoredAccessToken(tokenPath());
-    return await fn(new ContentApiClient(accessToken, backend, chromiumFetch));
+    return await fn(new ContentApiClient(accessToken, backend, apiFetch));
   } catch (err) {
     if (isDaUnauthorizedError(err)) {
       throw await handleDaUnauthorized(err, site, backend);
@@ -704,6 +716,7 @@ ipcMain.handle('sync:check', async (event, {
     throw new Error('Site not found');
   }
 
+  const checkLog = log.scope('sync-check');
   return withContentClient(site, async (client) => {
     const allFiles = [];
     const reportProgress = (discovered) => {
@@ -714,7 +727,11 @@ ipcMain.handle('sync:check', async (event, {
 
     // Drop selections nested under another selected folder so overlapping
     // multi-selections don't list the same subtree (and re-count) repeatedly.
-    for (const item of pruneSelectionForListing(items)) {
+    const listItems = pruneSelectionForListing(items);
+    if (API_REQUEST_LOG_ENABLED) {
+      checkLog.info(`start: ${listItems.length} selected item(s), includeBinaries=${includeBinaries}`);
+    }
+    for (const item of listItems) {
       if (item.isFolder) {
         const base = allFiles.length;
         // eslint-disable-next-line no-await-in-loop
@@ -728,6 +745,9 @@ ipcMain.handle('sync:check', async (event, {
           ({ discovered }) => reportProgress(base + discovered),
         );
         allFiles.push(...children);
+        if (API_REQUEST_LOG_ENABLED) {
+          checkLog.info(`folder ${item.daPath}: +${children.length} (total ${allFiles.length})`);
+        }
       } else {
         if (!includeBinaries && isBinaryExtension(item.ext)) {
           // eslint-disable-next-line no-continue
@@ -754,6 +774,9 @@ ipcMain.handle('sync:check', async (event, {
       scopePaths: items.map((i) => i.daPath),
     });
 
+    if (API_REQUEST_LOG_ENABLED) {
+      checkLog.info(`done: ${filtered.length} file(s) to consider`);
+    }
     return { ...status, totalFiles: filtered.length };
   });
 });
