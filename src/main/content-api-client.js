@@ -38,10 +38,17 @@ import {
 } from './http-request-error.js';
 import {
   withRateLimitRetry,
-  withRequestPacer,
+  createRequestPacer,
 } from './http-rate-limit.js';
 
 const LIST_MAX_PAGES = 50000;
+
+// One pacer shared by every AEM API client instance, so the app's *combined*
+// request rate stays under the admin API's per-project limit. A per-client
+// pacer would reset each time withContentClient builds a new client, letting
+// concurrent operations (listing, source fetches, sync) collectively burst
+// past the limit and trigger 429s.
+const sharedAemApiPace = createRequestPacer();
 
 /**
  * Wraps a fetch implementation so transport failures (DNS, TLS, proxy,
@@ -77,7 +84,11 @@ function wrapContentApiFetch(fetchImpl, backend) {
   let next = withNetworkErrorDetail(fetchImpl);
   next = withRateLimitRetry(next);
   if (backend === API_BACKEND_AEM_API) {
-    next = withRequestPacer(next);
+    const paced = next;
+    next = async (url, init = {}) => {
+      await sharedAemApiPace(init.signal);
+      return paced(url, init);
+    };
   }
   return next;
 }

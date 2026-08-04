@@ -162,6 +162,42 @@ export function withRateLimitRetry(fetchImpl, {
 }
 
 /**
+ * Creates a shareable pacing gate. Calling the returned function reserves the
+ * next slot (spaced by `minIntervalMs`) and resolves when it is time to
+ * proceed. Sharing one gate across many fetch wrappers / client instances caps
+ * the *combined* request rate — unlike {@link withRequestPacer}, whose gate is
+ * private to a single wrapper and so resets every time a new client is built.
+ *
+ * @param {{
+ *   minIntervalMs?: number,
+ *   sleepFn?: typeof sleep,
+ *   now?: () => number,
+ * }} [options]
+ * @returns {(signal?: AbortSignal) => Promise<void>}
+ */
+export function createRequestPacer({
+  minIntervalMs = AEM_ADMIN_MIN_INTERVAL_MS,
+  sleepFn = sleep,
+  now = Date.now,
+} = {}) {
+  let nextAllowedAt = 0;
+  let gate = Promise.resolve();
+
+  return (signal) => {
+    const scheduled = gate.then(async () => {
+      const waitMs = Math.max(0, nextAllowedAt - now());
+      if (waitMs > 0) {
+        await sleepFn(waitMs, signal);
+      }
+      nextAllowedAt = now() + minIntervalMs;
+    });
+    // Keep the gate moving even if a wait is aborted.
+    gate = scheduled.catch(() => {});
+    return scheduled;
+  };
+}
+
+/**
  * Spaces out request *starts* so sustained throughput stays near a target RPS.
  * In-flight requests may still overlap; this only gates when the next fetch begins.
  *
@@ -173,25 +209,10 @@ export function withRateLimitRetry(fetchImpl, {
  * }} [options]
  * @returns {typeof fetch}
  */
-export function withRequestPacer(fetchImpl, {
-  minIntervalMs = AEM_ADMIN_MIN_INTERVAL_MS,
-  sleepFn = sleep,
-  now = Date.now,
-} = {}) {
-  let nextAllowedAt = 0;
-  let gate = Promise.resolve();
-
+export function withRequestPacer(fetchImpl, options = {}) {
+  const pace = createRequestPacer(options);
   return async (url, init = {}) => {
-    const scheduled = gate.then(async () => {
-      const waitMs = Math.max(0, nextAllowedAt - now());
-      if (waitMs > 0) {
-        await sleepFn(waitMs, init.signal);
-      }
-      nextAllowedAt = now() + minIntervalMs;
-    });
-    // Keep the gate moving even if a wait is aborted.
-    gate = scheduled.catch(() => {});
-    await scheduled;
+    await pace(init.signal);
     return fetchImpl(url, init);
   };
 }
