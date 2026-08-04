@@ -606,6 +606,32 @@ async function readTextFileIfExists(path) {
   }
 }
 
+// Formatted content of the LOCAL working copy (what a review is pushing),
+// used by the JSON table view so it reflects local edits rather than the
+// remote source. Returns null when there is no local working file.
+ipcMain.handle('content:get-local', async (_event, { siteId, destFolder, daPath }) => {
+  if (!destFolder) {
+    return null;
+  }
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+
+  const { workingPath } = syncPaths(destFolder, site.org, site.repo, daPath);
+  const body = await readTextFileIfExists(workingPath);
+  if (body === null) {
+    return null;
+  }
+
+  const name = daPath.split('/').pop() || daPath;
+  const formatted = formatContentForDisplay({
+    name, contentType: '', body, isText: true,
+  });
+  return { daPath, ...formatted };
+});
+
 const DOCUMENT_DIFF_EXTS = new Set(['html', 'htm']);
 
 // Track-changes diff between the synced original (remote snapshot under

@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { jsonToSheets } from './json-table.js';
+
 /**
  * @typedef {{ cells: string[] }} DocumentRow
  * @typedef {{
@@ -154,6 +156,79 @@ export function renderDocumentView(container, model, emptyMessage = 'No document
       }
     }
   });
+
+  container.append(prose);
+}
+
+/**
+ * @param {import('./json-table.js').JsonSheet} sheet
+ * @returns {HTMLDivElement}
+ */
+function createJsonSheetTable(sheet) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tableWrapper da-json-table';
+
+  const table = document.createElement('table');
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const col of sheet.columns) {
+    const th = document.createElement('th');
+    th.textContent = col;
+    headRow.append(th);
+  }
+  thead.append(headRow);
+  table.append(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const row of sheet.rows) {
+    const tr = document.createElement('tr');
+    for (let i = 0; i < sheet.columns.length; i += 1) {
+      const td = document.createElement('td');
+      td.textContent = row[i] ?? '';
+      tr.append(td);
+    }
+    tbody.append(tr);
+  }
+  table.append(tbody);
+
+  wrapper.append(table);
+  return wrapper;
+}
+
+/**
+ * Renders parsed JSON as one or more data tables (AEM single/multi-sheet, bare
+ * arrays, or a key/value view of a plain object).
+ *
+ * @param {HTMLElement} container
+ * @param {unknown} data parsed JSON
+ * @param {string} [emptyMessage]
+ */
+export function renderJsonTableView(container, data, emptyMessage = 'No JSON content.') {
+  container.replaceChildren();
+  container.classList.add('document-view');
+
+  const sheets = jsonToSheets(data).filter((s) => s.rows.length > 0);
+  if (sheets.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'placeholder';
+    p.textContent = emptyMessage;
+    container.append(p);
+    return;
+  }
+
+  const prose = document.createElement('div');
+  prose.className = 'da-document-view';
+
+  for (const sheet of sheets) {
+    if (sheet.name) {
+      const heading = document.createElement('h3');
+      heading.className = 'da-json-sheet-name';
+      heading.textContent = sheet.name;
+      prose.append(heading);
+    }
+    prose.append(createJsonSheetTable(sheet));
+  }
 
   container.append(prose);
 }

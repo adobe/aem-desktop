@@ -30,7 +30,11 @@ import {
   renderReviewFileList, renderDiffView, wireReviewKeyboard,
   togglePathsCheckState,
 } from './review-view.js';
-import { renderDocumentView, renderDocumentDiffView } from './document-view.js';
+import {
+  renderDocumentView,
+  renderDocumentDiffView,
+  renderJsonTableView,
+} from './document-view.js';
 import { initDesktopRum, trackDesktopPageView } from './rum.js';
 
 const state = {
@@ -827,7 +831,64 @@ async function loadBrowseCode(item) {
   }
 }
 
+/**
+ * Classifies a file by extension for the review content view.
+ *
+ * @param {string|null|undefined} daPath
+ * @returns {'html'|'json'|'other'}
+ */
+function fileKindFromDaPath(daPath) {
+  if (!daPath) {
+    return 'other';
+  }
+  const ext = daPath.split('.').pop().toLowerCase();
+  if (ext === 'html' || ext === 'htm') {
+    return 'html';
+  }
+  if (ext === 'json') {
+    return 'json';
+  }
+  return 'other';
+}
+
+async function loadJsonTableView(daPath, pane) {
+  setPanePlaceholder(pane, 'Loading table…');
+  try {
+    // Prefer the local working copy (review shows local edits); fall back to
+    // the remote source when there is no sync folder / working file.
+    let source = null;
+    if (syncFolder) {
+      source = await window.aemDesktop.getLocalSource(state.activeSiteId, syncFolder, daPath);
+    }
+    if (!source) {
+      source = await window.aemDesktop.getDaSource(state.activeSiteId, daPath);
+    }
+    if (!source || source.mode === 'binary') {
+      setPanePlaceholder(pane, 'No JSON content.');
+      return;
+    }
+    let data;
+    try {
+      data = JSON.parse(source.text);
+    } catch {
+      setPanePlaceholder(pane, 'Invalid JSON — cannot render table.');
+      return;
+    }
+    renderJsonTableView(pane, data);
+  } catch (err) {
+    if (isDaUnauthorizedError(err)) {
+      await refreshAuthStatus();
+      return;
+    }
+    setPanePlaceholder(pane, err.message || 'Failed to load table.');
+  }
+}
+
 async function loadDocumentViewForPath(daPath, pane) {
+  if (fileKindFromDaPath(daPath) === 'json') {
+    await loadJsonTableView(daPath, pane);
+    return;
+  }
   setPanePlaceholder(pane, 'Loading document…');
   try {
     // Local changes render as a track-changes diff against the synced
@@ -879,31 +940,46 @@ function refreshBrowseOpenedFile() {
   }
 }
 
+/**
+ * Applies the review segment/pane state for the focused file and returns the
+ * effective mode. Document + code are only offered for HTML and JSON; other
+ * (binary) files collapse to preview only, so their content shows in the
+ * browser. `reviewContentMode` stays the user's preference across files.
+ *
+ * @returns {ContentMode}
+ */
 function syncReviewContentView() {
-  if (reviewFocusPath) {
+  // Document + code (diff) are only meaningful for HTML and JSON. Binary /
+  // other files collapse to preview only, so we hide the whole mode toolbar
+  // and show the file in the browser preview.
+  const richEnabled = fileKindFromDaPath(reviewFocusPath) !== 'other';
+  if (reviewFocusPath && richEnabled) {
     show(els.reviewContentToolbar);
   } else {
     hide(els.reviewContentToolbar);
   }
 
-  reviewContentMode = setSegmentMode(
+  const effective = richEnabled ? reviewContentMode : 'preview';
+  const applied = setSegmentMode(
     els.reviewSegment,
     reviewSegmentButtons(),
-    reviewContentMode,
+    effective,
+    { codeEnabled: richEnabled },
   );
-  setPaneActive(reviewPanes(), reviewContentMode);
+  setPaneActive(reviewPanes(), applied);
+  return applied;
 }
 
 function setReviewContentMode(mode) {
   reviewContentMode = mode;
   saveContentMode(mode);
-  syncReviewContentView();
+  const applied = syncReviewContentView();
   if (!reviewFocusPath) {
     return;
   }
-  if (mode === 'preview') {
+  if (applied === 'preview') {
     loadReviewPreview(reviewFocusPath);
-  } else if (mode === 'document') {
+  } else if (applied === 'document') {
     loadReviewDocument(reviewFocusPath);
   }
 }
@@ -2263,15 +2339,16 @@ function paintReviewFileList() {
 }
 
 function showReviewDiff(daPath) {
+  const applied = syncReviewContentView();
   const file = reviewDiffs.find((d) => d.daPath === daPath);
-  if (file) {
+  // Code (diff) is only offered for HTML/JSON; skip it for binary files.
+  if (file && fileKindFromDaPath(daPath) !== 'other') {
     renderDiffView(els.reviewCodePane, file);
   }
   loadReviewPreview(daPath);
-  if (reviewContentMode === 'document') {
+  if (applied === 'document') {
     loadReviewDocument(daPath);
   }
-  syncReviewContentView();
 }
 
 function focusReviewFile(daPath) {
@@ -2357,14 +2434,10 @@ function renderReviewPlaceholder(message) {
   els.reviewCodePane.replaceChildren();
   els.reviewPreviewPane.replaceChildren();
   els.reviewDocumentPane.replaceChildren();
-  if (reviewContentMode === 'preview') {
-    setPanePlaceholder(els.reviewPreviewPane, message);
-  } else if (reviewContentMode === 'document') {
-    setPanePlaceholder(els.reviewDocumentPane, message);
-  } else {
-    setPanePlaceholder(els.reviewCodePane, message);
-  }
-  syncReviewContentView();
+  // Put the message in whichever pane sync ends up activating (with no file
+  // focused the toolbar is hidden and preview is the active pane).
+  const applied = syncReviewContentView();
+  setPanePlaceholder(reviewPanes()[applied], message);
 }
 
 async function loadReviewChanges() {

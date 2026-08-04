@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   },
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
+  getLocalSource: (siteId, destFolder, daPath) => ipcRenderer.invoke(
+    'content:get-local',
+    { siteId, destFolder, daPath },
+  ),
   parseDocumentView: (html) => ipcRenderer.invoke('document:parse', { html }),
   getDocumentDiff: (siteId, destFolder, daPath) => ipcRenderer.invoke(
     'document:diff',
