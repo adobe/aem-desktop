@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),
   setSyncFolder: (destFolder) => ipcRenderer.invoke('sync:set-folder', { destFolder }),
   checkSync: (options) => ipcRenderer.invoke('sync:check', options),
+  cancelSyncCheck: () => ipcRenderer.invoke('sync:check-cancel'),
   getLocalSyncBadges: (options) => ipcRenderer.invoke('sync:local-badges', options),
   runSync: (options) => ipcRenderer.invoke('sync:run', options),
   cancelSync: () => ipcRenderer.invoke('sync:cancel'),

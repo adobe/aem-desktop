@@ -707,6 +707,15 @@ ipcMain.handle('sync:pick-folder', async () => {
   return folder;
 });
 
+let syncCheckAbortController = null;
+
+ipcMain.handle('sync:check-cancel', () => {
+  if (syncCheckAbortController) {
+    syncCheckAbortController.abort();
+    syncCheckAbortController = null;
+  }
+});
+
 ipcMain.handle('sync:check', async (event, {
   siteId, items, destFolder, includeBinaries,
 }) => {
@@ -716,69 +725,95 @@ ipcMain.handle('sync:check', async (event, {
     throw new Error('Site not found');
   }
 
+  // Supersede any in-flight check (e.g. toggling "include binaries" mid-scan,
+  // or reopening the dialog) so the tree isn't listed twice at once and the
+  // two progress streams don't fight over the counter.
+  if (syncCheckAbortController) {
+    syncCheckAbortController.abort();
+  }
+  const controller = new AbortController();
+  syncCheckAbortController = controller;
+  const { signal } = controller;
+
   const checkLog = log.scope('sync-check');
-  return withContentClient(site, async (client) => {
-    const allFiles = [];
-    const reportProgress = (discovered) => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('sync:check-progress', { discovered });
-      }
-    };
+  try {
+    return await withContentClient(site, async (client) => {
+      const allFiles = [];
+      const reportProgress = (discovered) => {
+        if (!signal.aborted && !event.sender.isDestroyed()) {
+          event.sender.send('sync:check-progress', { discovered });
+        }
+      };
 
-    // Drop selections nested under another selected folder so overlapping
-    // multi-selections don't list the same subtree (and re-count) repeatedly.
-    const listItems = pruneSelectionForListing(items);
-    if (API_REQUEST_LOG_ENABLED) {
-      checkLog.info(`start: ${listItems.length} selected item(s), includeBinaries=${includeBinaries}`);
-    }
-    for (const item of listItems) {
-      if (item.isFolder) {
-        const base = allFiles.length;
-        // eslint-disable-next-line no-await-in-loop
-        const children = await collectFolder(
-          client,
-          site.org,
-          site.repo,
-          item.daPath,
-          includeBinaries,
-          undefined,
-          ({ discovered }) => reportProgress(base + discovered),
-        );
-        allFiles.push(...children);
+      // Drop selections nested under another selected folder so overlapping
+      // multi-selections don't list the same subtree (and re-count) repeatedly.
+      const listItems = pruneSelectionForListing(items);
+      if (API_REQUEST_LOG_ENABLED) {
+        checkLog.info(`start: ${listItems.length} selected item(s), includeBinaries=${includeBinaries}`);
+      }
+      for (const item of listItems) {
+        if (signal.aborted) {
+          break;
+        }
+        if (item.isFolder) {
+          const base = allFiles.length;
+          // eslint-disable-next-line no-await-in-loop
+          const children = await collectFolder(
+            client,
+            site.org,
+            site.repo,
+            item.daPath,
+            includeBinaries,
+            signal,
+            ({ discovered }) => reportProgress(base + discovered),
+          );
+          allFiles.push(...children);
+          if (API_REQUEST_LOG_ENABLED) {
+            checkLog.info(`folder ${item.daPath}: +${children.length} (total ${allFiles.length})`);
+          }
+        } else {
+          if (!includeBinaries && isBinaryExtension(item.ext)) {
+            // eslint-disable-next-line no-continue
+            continue;
+          }
+          allFiles.push({
+            daPath: item.daPath,
+            ext: item.ext,
+            lastModified: item.lastModified,
+          });
+          reportProgress(allFiles.length);
+        }
+      }
+
+      if (signal.aborted) {
         if (API_REQUEST_LOG_ENABLED) {
-          checkLog.info(`folder ${item.daPath}: +${children.length} (total ${allFiles.length})`);
+          checkLog.info('superseded — aborted');
         }
-      } else {
-        if (!includeBinaries && isBinaryExtension(item.ext)) {
-          // eslint-disable-next-line no-continue
-          continue;
-        }
-        allFiles.push({
-          daPath: item.daPath,
-          ext: item.ext,
-          lastModified: item.lastModified,
-        });
-        reportProgress(allFiles.length);
+        return { aborted: true };
       }
-    }
 
-    const filtered = includeBinaries
-      ? allFiles
-      : allFiles.filter((f) => !isBinaryExtension(f.ext));
+      const filtered = includeBinaries
+        ? allFiles
+        : allFiles.filter((f) => !isBinaryExtension(f.ext));
 
-    const status = await checkSyncStatus({
-      destRoot: destFolder,
-      org: site.org,
-      repo: site.repo,
-      remoteFiles: filtered,
-      scopePaths: items.map((i) => i.daPath),
+      const status = await checkSyncStatus({
+        destRoot: destFolder,
+        org: site.org,
+        repo: site.repo,
+        remoteFiles: filtered,
+        scopePaths: items.map((i) => i.daPath),
+      });
+
+      if (API_REQUEST_LOG_ENABLED) {
+        checkLog.info(`done: ${filtered.length} file(s) to consider`);
+      }
+      return { ...status, totalFiles: filtered.length };
     });
-
-    if (API_REQUEST_LOG_ENABLED) {
-      checkLog.info(`done: ${filtered.length} file(s) to consider`);
+  } finally {
+    if (syncCheckAbortController === controller) {
+      syncCheckAbortController = null;
     }
-    return { ...status, totalFiles: filtered.length };
-  });
+  }
 });
 
 ipcMain.handle('sync:run', async (event, {

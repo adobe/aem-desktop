@@ -1548,6 +1548,9 @@ let syncFolder = null;
 // siteId -> { hasContent: boolean, changeCount: number }; drives the overview
 // remove control (× to remove the connection vs. trash to delete local content).
 let siteContent = {};
+// Monotonic token identifying the current sync check; a new check bumps it so
+// progress/results from a superseded one (main process aborts it) are ignored.
+let syncCheckSeq = 0;
 let syncing = false;
 let syncedPath = null;
 let syncConflicts = [];
@@ -2124,8 +2127,17 @@ async function runSyncCheck() {
   els.syncSelectionSummary.textContent = formatCheckingSummary(0);
   els.syncStart.disabled = true;
 
+  // Supersede any earlier run: bump the token so stale progress/results (from a
+  // check the main process is aborting, e.g. after toggling "include binaries")
+  // are ignored and don't reset the counter.
+  syncCheckSeq += 1;
+  const mySeq = syncCheckSeq;
+
   let removeCheckProgressListener = null;
   removeCheckProgressListener = window.aemDesktop.onSyncCheckProgress(({ discovered }) => {
+    if (mySeq !== syncCheckSeq) {
+      return;
+    }
     els.syncSelectionSummary.textContent = formatCheckingSummary(discovered);
   });
 
@@ -2138,6 +2150,10 @@ async function runSyncCheck() {
       includeBinaries: els.syncIncludeBinaries.checked,
     });
 
+    if (mySeq !== syncCheckSeq || status.aborted) {
+      return; // superseded by a newer check
+    }
+
     syncConflicts = status.conflicts || [];
     syncUnchanged = status.unchanged || [];
     syncModified = status.modified || [];
@@ -2148,6 +2164,9 @@ async function runSyncCheck() {
     renderSyncStatus(status);
     updateSyncStartEnabled();
   } catch (err) {
+    if (mySeq !== syncCheckSeq) {
+      return; // superseded by a newer check
+    }
     syncTotalFiles = 0;
     syncRequiresModifiedAck = false;
     syncRequiresConflictAck = false;
@@ -2186,6 +2205,10 @@ function openSyncModal() {
 }
 
 function closeSyncModal() {
+  // Stop any in-flight check so it isn't left listing the whole tree in the
+  // background, and invalidate its progress/result.
+  syncCheckSeq += 1;
+  window.aemDesktop.cancelSyncCheck();
   if (syncing) {
     window.aemDesktop.cancelSync();
   }
