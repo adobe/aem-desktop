@@ -36,6 +36,7 @@ import {
   renderJsonTableView,
 } from './document-view.js';
 import { initDesktopRum, trackDesktopPageView } from './rum.js';
+import { formatRelativeTime } from './relative-time.js';
 
 const state = {
   view: 'home',
@@ -64,6 +65,8 @@ const els = {
   navOrg: document.getElementById('nav-org'),
   navRepo: document.getElementById('nav-repo'),
   navBranch: document.getElementById('nav-branch'),
+  navFavicon: document.getElementById('nav-favicon'),
+  navStatus: document.getElementById('nav-status'),
   homeView: document.getElementById('home-view'),
   browseView: document.getElementById('browse-view'),
   siteList: document.getElementById('site-list'),
@@ -193,6 +196,38 @@ function showReviewPostPushActions() {
   }
 }
 
+/**
+ * The site's live favicon URL (e.g. https://main--repo--org.aem.page/favicon.ico).
+ *
+ * @param {{ previewUrl?: string }} site
+ * @returns {string|null}
+ */
+function siteFaviconUrl(site) {
+  if (!site.previewUrl) {
+    return null;
+  }
+  return `${site.previewUrl.replace(/\/+$/, '')}/favicon.ico`;
+}
+
+/**
+ * Points an <img> at the site favicon, hiding it if it fails to load (many
+ * sites have no favicon → 404).
+ *
+ * @param {HTMLImageElement} img
+ * @param {{ previewUrl?: string }} site
+ */
+function applyFavicon(img, site) {
+  const url = siteFaviconUrl(site);
+  if (!url) {
+    img.classList.add('is-hidden');
+    return;
+  }
+  img.classList.remove('is-hidden');
+  // eslint-disable-next-line no-param-reassign -- reset the handler on the reused nav element
+  img.onerror = () => img.classList.add('is-hidden');
+  img.setAttribute('src', url);
+}
+
 function renderNav() {
   const site = activeSite();
   if (!site || (state.view !== 'browse' && state.view !== 'review')) {
@@ -201,6 +236,203 @@ function renderNav() {
   els.navOrg.textContent = site.org;
   els.navRepo.textContent = site.repo;
   els.navBranch.textContent = site.branch;
+  applyFavicon(els.navFavicon, site);
+  renderNavStatus();
+}
+
+/**
+ * @param {import('../main/da-sync.js').SyncSummary|null|undefined} summary
+ * @returns {number} local changes (modified + new + deleted), 0 if unknown
+ */
+function syncChangeCount(summary) {
+  if (!summary) {
+    return 0;
+  }
+  return (summary.modifiedCount || 0) + (summary.newCount || 0) + (summary.deletedCount || 0);
+}
+
+/**
+ * @param {string} text
+ * @param {string} [variant] extra class (e.g. 'is-modified' | 'is-new' | 'is-deleted')
+ * @returns {HTMLSpanElement}
+ */
+function summaryItem(text, variant) {
+  const item = document.createElement('span');
+  item.className = variant ? `sync-summary-item ${variant}` : 'sync-summary-item';
+  item.textContent = text;
+  return item;
+}
+
+/**
+ * Builds the shared "N files · M modified · K new · D deleted · synced …" nodes
+ * for a local sync summary, used by both the header readout and the sites
+ * overview rows. Change counts are shown only when non-zero and GitHub-style
+ * colored (modified blue, new green, deleted red); they are omitted entirely
+ * until counts are known (cached-only fallback).
+ *
+ * @param {import('../main/da-sync.js').SyncSummary|null} summary
+ * @returns {HTMLElement[]}
+ */
+function summarySeparator() {
+  const sep = document.createElement('span');
+  sep.className = 'sync-summary-sep';
+  sep.setAttribute('aria-hidden', 'true');
+  sep.textContent = '·';
+  return sep;
+}
+
+/**
+ * @param {HTMLElement[]} items
+ * @returns {HTMLElement[]} items joined with '·' separators
+ */
+function interleaveSeparators(items) {
+  const nodes = [];
+  items.forEach((item, i) => {
+    if (i > 0) {
+      nodes.push(summarySeparator());
+    }
+    nodes.push(item);
+  });
+  return nodes;
+}
+
+/**
+ * The file count + colored change counts (no "synced …" part).
+ *
+ * @param {import('../main/da-sync.js').SyncSummary} summary
+ * @returns {HTMLElement[]}
+ */
+function syncCountItems(summary) {
+  const items = [summaryItem(`${summary.fileCount} ${summary.fileCount === 1 ? 'file' : 'files'}`)];
+  if (summary.modifiedCount) {
+    items.push(summaryItem(`${summary.modifiedCount} modified`, 'is-modified'));
+  }
+  if (summary.newCount) {
+    items.push(summaryItem(`${summary.newCount} new`, 'is-new'));
+  }
+  if (summary.deletedCount) {
+    items.push(summaryItem(`${summary.deletedCount} deleted`, 'is-deleted'));
+  }
+  return items;
+}
+
+/**
+ * Plain-text summary nodes for the overview rows (which are themselves buttons,
+ * so the synced part stays text here — the clickable refresh lives in the
+ * header, see {@link buildNavRefreshButton}).
+ *
+ * @param {import('../main/da-sync.js').SyncSummary|null} summary
+ * @returns {HTMLElement[]}
+ */
+function syncSummaryNodes(summary) {
+  if (!summary) {
+    return [summaryItem('Not downloaded')];
+  }
+  const items = syncCountItems(summary);
+  const syncedLabel = formatRelativeTime(summary.syncedAt);
+  if (syncedLabel) {
+    items.push(summaryItem(`updated ${syncedLabel}`));
+  }
+  return interleaveSeparators(items);
+}
+
+// GitHub octicon "sync" — the refresh glyph in front of the header pull button.
+const REFRESH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+  + '<path fill="currentColor" d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204'
+  + 'a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 '
+  + '1.05 8.84a.75.75 0 0 1 .656-.834Zm5.19-6.428a7.002 7.002 0 0 1 8.055 3.607.75.75 0 0 1-1.35.646 5.5 5.5 0 0 0'
+  + '-9.591-.033l1.204 1.204A.25.25 0 0 1 4.896 8H1.25A.25.25 0 0 1 1 7.75V4.104a.25.25 0 0 1 .427-.177l1.38 1.38'
+  + 'a7.001 7.001 0 0 1 4.088-3.73Z"/></svg>';
+
+/**
+ * The inverted "synced …" refresh button that replaces the old Pull button:
+ * clicking it pulls the latest content from AEM. Shows the last-synced time
+ * (or "Pull from AEM" when nothing is synced yet).
+ *
+ * @param {import('../main/da-sync.js').SyncSummary|null} summary
+ * @returns {HTMLButtonElement}
+ */
+function buildNavRefreshButton(summary) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'nav-refresh';
+
+  const icon = document.createElement('span');
+  icon.className = 'nav-refresh-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = REFRESH_ICON;
+
+  const label = document.createElement('span');
+  const rel = summary && summary.syncedAt ? formatRelativeTime(summary.syncedAt) : '';
+  label.textContent = rel ? `Updated ${rel}` : 'Check for updates';
+
+  btn.append(icon, label);
+  btn.title = 'Check AEM for the latest content';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openPullModal();
+  });
+  return btn;
+}
+
+/**
+ * @param {import('../main/da-sync.js').SyncSummary|null} summary
+ * @returns {string}
+ */
+function syncSummaryTitle(summary) {
+  if (!summary) {
+    return 'Nothing downloaded yet';
+  }
+  const parts = [`${summary.fileCount} downloaded file${summary.fileCount === 1 ? '' : 's'}`];
+  if (summary.modifiedCount) parts.push(`${summary.modifiedCount} modified`);
+  if (summary.newCount) parts.push(`${summary.newCount} new`);
+  if (summary.deletedCount) parts.push(`${summary.deletedCount} deleted`);
+  if (summary.syncedAt) parts.push(`last updated ${new Date(summary.syncedAt).toLocaleString()}`);
+  return parts.join(' · ');
+}
+
+/**
+ * Renders the top-right local-status readout for the active site (file count,
+ * locally-modified count, last-synced time) from local manifest / working-copy
+ * state — no AEM call. Paints the cached value immediately, then refreshes with
+ * a freshly computed summary.
+ */
+async function renderNavStatus() {
+  if (!els.navStatus) {
+    return;
+  }
+  const site = activeSite();
+  if (!site || (state.view !== 'browse' && state.view !== 'review')) {
+    els.navStatus.replaceChildren();
+    return;
+  }
+  if (!syncFolder) {
+    els.navStatus.replaceChildren(summaryItem('Not downloaded'));
+    els.navStatus.title = 'No local folder selected';
+    return;
+  }
+
+  const siteId = state.activeSiteId;
+  const paint = (summary) => {
+    if (state.activeSiteId !== siteId) {
+      return;
+    }
+    // Counts as plain text; the "synced …" part is the inverted refresh button.
+    const nodes = summary ? interleaveSeparators(syncCountItems(summary)) : [];
+    if (nodes.length) {
+      nodes.push(summarySeparator());
+    }
+    nodes.push(buildNavRefreshButton(summary));
+    els.navStatus.replaceChildren(...nodes);
+    els.navStatus.title = syncSummaryTitle(summary);
+  };
+
+  try {
+    paint(await window.aemDesktop.getLocalSyncSummary(siteId, syncFolder, false));
+  } catch { /* ignore cached read failure */ }
+  try {
+    paint(await window.aemDesktop.getLocalSyncSummary(siteId, syncFolder, true));
+  } catch { /* ignore fresh compute failure */ }
 }
 
 function showView(view) {
@@ -238,7 +470,7 @@ function trackShellPageView(overrides = {}) {
 function goHome() {
   showView('home');
   renderSites();
-  refreshSiteContent();
+  refreshSiteSummaries();
   trackShellPageView();
 }
 
@@ -1094,7 +1326,7 @@ function paintFileTree() {
     onRowClick: handleRowClick,
     onRowDoubleClick: handleRowDoubleClick,
     onSyncSelected: openSyncModal,
-    onPull: openPullModal,
+    // Pull now lives in the header as the "synced …" refresh button (renderNavStatus).
     onPush: openPushModal,
     selectionCount: state.tree.selectedPaths.size,
     syncBadges: state.tree.syncBadges,
@@ -1292,6 +1524,7 @@ function checkPushStatus() {
 function autoSyncCheck() {
   refreshVisibleLocalBadges();
   checkPushStatus();
+  renderNavStatus();
 }
 
 async function refreshVisibleLocalBadges() {
@@ -1382,7 +1615,7 @@ function renderSites() {
     return;
   }
 
-  for (const site of state.sites) {
+  for (const site of sortedSitesForOverview()) {
     const li = document.createElement('li');
     li.className = 'site-item';
 
@@ -1391,12 +1624,69 @@ function renderSites() {
     btn.className = 'site-btn';
     btn.disabled = !state.authenticated;
     btn.title = state.authenticated ? '' : 'Sign in to AEM to open this site';
-    btn.innerHTML = `<span class="site-name">${siteLabel(site)}</span><span class="site-branch">${site.branch}</span>`;
+
+    const favicon = document.createElement('img');
+    favicon.className = 'site-favicon';
+    favicon.alt = '';
+    favicon.setAttribute('aria-hidden', 'true');
+    favicon.loading = 'lazy';
+    applyFavicon(favicon, site);
+
+    // Title: "org/repo · branch" inline, mirroring the browse header.
+    const name = document.createElement('span');
+    name.className = 'site-name';
+    name.textContent = siteLabel(site);
+    const branch = document.createElement('span');
+    branch.className = 'site-branch';
+    branch.textContent = site.branch;
+    const title = document.createElement('span');
+    title.className = 'site-title';
+    title.append(name, branch);
+
+    const status = document.createElement('span');
+    status.className = 'site-status';
+    const summary = siteSummaries[site.id];
+    status.replaceChildren(...syncSummaryNodes(summary));
+    status.title = syncSummaryTitle(summary);
+
+    const text = document.createElement('span');
+    text.className = 'site-text';
+    text.append(title, status);
+
+    btn.append(favicon, text);
     btn.addEventListener('click', () => selectSite(site.id));
 
     li.append(btn, buildSiteRemoveControl(site));
     els.siteList.append(li);
   }
+}
+
+/**
+ * Sites ordered for the overview: most-recently-synced first (by the cached
+ * `syncedAt`), with never-synced connections kept last in their existing order.
+ *
+ * @returns {Array<object>}
+ */
+function sortedSitesForOverview() {
+  const syncedMs = (site) => {
+    const at = siteSummaries[site.id]?.syncedAt;
+    const ms = at ? Date.parse(at) : NaN;
+    return Number.isNaN(ms) ? null : ms;
+  };
+  return [...state.sites].sort((a, b) => {
+    const ma = syncedMs(a);
+    const mb = syncedMs(b);
+    if (ma !== null && mb !== null) {
+      return mb - ma;
+    }
+    if (ma !== null) {
+      return -1;
+    }
+    if (mb !== null) {
+      return 1;
+    }
+    return 0;
+  });
 }
 
 const TRASH_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">'
@@ -1414,15 +1704,15 @@ const TRASH_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false
  * @returns {HTMLButtonElement}
  */
 function buildSiteRemoveControl(site) {
-  const summary = siteContent[site.id];
+  const summary = siteSummaries[site.id];
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
 
-  if (summary?.hasContent) {
+  if (summary) {
     removeBtn.className = 'btn-icon delete-site';
-    removeBtn.title = summary.changeCount > 0
-      ? 'Delete locally synced content (has unpushed changes)'
-      : 'Delete locally synced content';
+    removeBtn.title = syncChangeCount(summary) > 0
+      ? 'Delete downloaded content (has changes not yet uploaded)'
+      : 'Delete downloaded content';
     removeBtn.innerHTML = TRASH_ICON;
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1442,20 +1732,32 @@ function buildSiteRemoveControl(site) {
 }
 
 /**
- * Refreshes the cached synced-content summary for every connection, then
- * re-renders the list so trash/× controls reflect current on-disk state.
+ * Refreshes each connection's local sync summary and re-renders the overview.
+ * Paints cached values first (instant), then recomputes fresh in the
+ * background and repaints — so the status line and trash/× controls stay
+ * responsive even with many sites. All local; no AEM calls.
  */
-async function refreshSiteContent() {
+async function refreshSiteSummaries() {
   if (state.sites.length === 0) {
-    siteContent = {};
+    siteSummaries = {};
     return;
   }
   try {
-    siteContent = await window.aemDesktop.getSitesLocalContent(syncFolder) || {};
+    siteSummaries = await window.aemDesktop.getSitesLocalSummary(syncFolder, false) || {};
   } catch {
-    siteContent = {};
+    siteSummaries = {};
   }
   renderSites();
+
+  try {
+    const fresh = await window.aemDesktop.getSitesLocalSummary(syncFolder, true);
+    if (fresh) {
+      siteSummaries = fresh;
+      renderSites();
+    }
+  } catch {
+    // keep the cached values already rendered
+  }
 }
 
 /**
@@ -1467,7 +1769,7 @@ async function refreshSiteContent() {
 async function deleteSiteContent(siteId) {
   const result = await window.aemDesktop.deleteSiteLocalContent(siteId, syncFolder);
   if (result?.deleted) {
-    await refreshSiteContent();
+    await refreshSiteSummaries();
   }
 }
 
@@ -1480,7 +1782,7 @@ async function loadSites() {
     }
   }
   renderSites();
-  await refreshSiteContent();
+  await refreshSiteSummaries();
   if (state.view === 'browse' && state.activeSiteId) {
     await refreshTree();
   }
@@ -1545,9 +1847,10 @@ async function handleSignIn() {
 }
 
 let syncFolder = null;
-// siteId -> { hasContent: boolean, changeCount: number }; drives the overview
-// remove control (× to remove the connection vs. trash to delete local content).
-let siteContent = {};
+// siteId -> SyncSummary|null (cached local status); drives the overview status
+// line and the remove control (× to remove the connection vs. trash to delete
+// local content).
+let siteSummaries = {};
 // Monotonic token identifying the current sync check; a new check bumps it so
 // progress/results from a superseded one (main process aborts it) are ignored.
 let syncCheckSeq = 0;
@@ -1644,7 +1947,7 @@ function resetSyncModalState() {
   els.syncModifiedList.replaceChildren();
   els.syncProgressFill.style.width = '0%';
   els.syncProgressText.textContent = '';
-  els.syncStart.textContent = 'Sync';
+  els.syncStart.textContent = 'Download';
   els.syncCancel.textContent = 'Cancel';
   show(els.syncCancel);
   syncing = false;
@@ -1674,7 +1977,7 @@ function updateSyncFolderDisplay() {
 function renderSyncStatus(status) {
   const parts = [];
   if (status.newCount > 0) {
-    parts.push(`${pluralFiles(status.newCount)} not yet synced`);
+    parts.push(`${pluralFiles(status.newCount)} not yet downloaded`);
   }
   if (status.outdatedCount > 0) {
     parts.push(`${pluralFiles(status.outdatedCount)} outdated`);
@@ -1786,7 +2089,7 @@ function resetPullModalState() {
   els.pullConflictList.replaceChildren();
   els.pullProgressFill.style.width = '0%';
   els.pullProgressText.textContent = '';
-  els.pullStart.textContent = 'Pull';
+  els.pullStart.textContent = 'Update';
   els.pullCancel.textContent = 'Cancel';
   show(els.pullCancel);
   pulling = false;
@@ -1883,9 +2186,9 @@ function renderPullStatus(status) {
 
 function formatPullCheckingSummary(checked, total) {
   if (total > 0) {
-    return `Checking… ${checked.toLocaleString()} / ${total.toLocaleString()} synced file${total === 1 ? '' : 's'}`;
+    return `Checking… ${checked.toLocaleString()} / ${total.toLocaleString()} downloaded file${total === 1 ? '' : 's'}`;
   }
-  return 'Checking for remote changes…';
+  return 'Checking for updates…';
 }
 
 async function runPullCheck() {
@@ -1896,7 +2199,7 @@ async function runPullCheck() {
     hide(els.pullDeletedSection);
     hide(els.pullFileSection);
     hide(els.pullConflictWarning);
-    els.pullSummary.textContent = 'Choose a local sync folder to pull remote changes.';
+    els.pullSummary.textContent = 'Choose a local folder to check for updates.';
     return;
   }
 
@@ -2160,7 +2463,7 @@ async function runSyncCheck() {
     syncTotalFiles = status.totalFiles;
     els.syncOverwriteModified.checked = false;
     els.syncOverwriteConflicts.checked = false;
-    els.syncSelectionSummary.textContent = `${pluralFiles(status.totalFiles)} to sync`;
+    els.syncSelectionSummary.textContent = `${pluralFiles(status.totalFiles)} to download`;
     renderSyncStatus(status);
     updateSyncStartEnabled();
   } catch (err) {
@@ -2247,7 +2550,7 @@ function handleSyncProgress(data) {
     els.syncProgressText.textContent = `${data.completed} / ${data.total}  ${current}`;
   } else if (data.phase === 'done') {
     els.syncProgressFill.style.width = '100%';
-    els.syncProgressText.textContent = `Done — ${pluralFiles(data.total)} synced`;
+    els.syncProgressText.textContent = `Done — ${pluralFiles(data.total)} downloaded`;
     syncing = false;
     if (syncedPath) {
       show(els.syncReveal);
@@ -2300,7 +2603,7 @@ async function startSync() {
       autoSyncCheck();
     } else if (result.error) {
       els.syncProgressText.textContent = result.error.message;
-      await showRequestErrorDialog('Sync failed', result.error);
+      await showRequestErrorDialog('Download failed', result.error);
     } else {
       syncSucceeded = true;
       if (result.syncedPath) {
@@ -2309,8 +2612,8 @@ async function startSync() {
       autoSyncCheck();
     }
   } catch (err) {
-    els.syncProgressText.textContent = err.message || 'Sync failed';
-    await showRequestErrorDialog('Sync failed', err);
+    els.syncProgressText.textContent = err.message || 'Download failed';
+    await showRequestErrorDialog('Download failed', err);
   } finally {
     syncing = false;
     els.syncPickFolder.disabled = false;
@@ -2444,8 +2747,8 @@ function updateReviewActionButtons({ forceDisabled = false } = {}) {
   els.reviewPush.disabled = forceDisabled || busy || count === 0;
   els.reviewRevert.disabled = forceDisabled || busy || count === 0;
   els.reviewPush.textContent = count > 0 && !forceDisabled
-    ? `Push changes (${count})`
-    : 'Push changes';
+    ? `Upload (${count})`
+    : 'Upload';
   els.reviewRevert.textContent = count > 0 && !forceDisabled
     ? `Revert selected (${count})`
     : 'Revert selected';
@@ -2633,7 +2936,7 @@ async function openPushModal() {
   reviewPreview.destroy();
   els.reviewPush.disabled = true;
   els.reviewRevert.disabled = true;
-  els.reviewPush.textContent = 'Push changes';
+  els.reviewPush.textContent = 'Upload';
   els.reviewRevert.textContent = 'Revert selected';
   els.reviewCancel.textContent = 'Cancel';
   hide(els.reviewProgress);
@@ -2667,7 +2970,7 @@ async function openPushModal() {
         () => {},
         () => {},
       );
-      renderReviewPlaceholder('No local changes to push');
+      renderReviewPlaceholder('No local changes to upload');
       return;
     }
 
@@ -2731,7 +3034,7 @@ function handleReviewProgress(data) {
       updateReviewActionButtons({ forceDisabled: true });
       els.reviewCancel.textContent = 'Done';
     } else {
-      els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} pushed`;
+      els.reviewProgressText.textContent = `Done — ${pluralFiles(data.total)} uploaded`;
       pushing = false;
       updateReviewActionButtons({ forceDisabled: true });
       els.reviewCancel.textContent = 'Done';
@@ -2827,16 +3130,16 @@ async function startPush() {
       lastPushedDeletedDaPaths = [];
       els.reviewProgressText.textContent = result.error.message;
       hide(els.reviewPostPushActions);
-      await showRequestErrorDialog('Push failed', result.error);
+      await showRequestErrorDialog('Upload failed', result.error);
     } else {
       await reloadReviewAfterPush();
     }
   } catch (err) {
     lastPushedDaPaths = [];
     lastPushedDeletedDaPaths = [];
-    els.reviewProgressText.textContent = err.message || 'Push failed';
+    els.reviewProgressText.textContent = err.message || 'Upload failed';
     hide(els.reviewPostPushActions);
-    await showRequestErrorDialog('Push failed', err);
+    await showRequestErrorDialog('Upload failed', err);
   } finally {
     pushing = false;
     if (removePushProgressListener) {

@@ -24,11 +24,13 @@
           <span class="nav-home-label">Sites</span>
         </button>
         <div class="nav-site">
+          <img id="nav-favicon" class="nav-favicon" alt="" aria-hidden="true" />
           <span id="nav-org" class="nav-pill"></span>
           <span class="nav-sep" aria-hidden="true">/</span>
           <span id="nav-repo" class="nav-pill"></span>
           <span id="nav-branch" class="nav-branch"></span>
         </div>
+        <div id="nav-status" class="nav-status" aria-live="polite"></div>
       </nav>
 
       <main id="home-view" class="home-view">
@@ -134,7 +136,7 @@
             <div class="rail-header-actions">
               <button type="button" id="review-cancel" class="s2-btn">Cancel</button>
               <button type="button" id="review-revert" class="s2-btn" disabled>Revert selected</button>
-              <button type="button" id="review-push" class="s2-btn s2-btn-primary" disabled>Push changes</button>
+              <button type="button" id="review-push" class="s2-btn s2-btn-primary" disabled>Upload</button>
             </div>
           </div>
           <div id="review-file-container" class="review-rail-body"></div>
@@ -222,7 +224,7 @@
     </div>
     <div id="sync-modal" class="modal-overlay hidden" hidden>
       <div class="modal">
-        <h2 class="modal-title">Sync to Local Folder</h2>
+        <h2 class="modal-title">Download to Local Folder</h2>
         <div class="modal-body">
           <div class="sync-selection">
             <p class="sync-selection-label">Selected</p>
@@ -248,7 +250,7 @@
             <p id="sync-local-only-text" class="sync-notice-text warn"></p>
           </div>
           <div id="sync-modified-warning" class="sync-notice warn hidden" hidden>
-            <p class="sync-notice-text warn">These files were modified locally. Syncing will overwrite your local changes.</p>
+            <p class="sync-notice-text warn">These files were modified locally. Downloading will overwrite your local changes.</p>
             <ul id="sync-modified-list" class="sync-path-list"></ul>
             <label class="sync-option">
               <input type="checkbox" id="sync-overwrite-modified" />
@@ -272,14 +274,14 @@
         <div class="modal-actions">
           <button type="button" id="sync-reveal" class="btn hidden" hidden>Reveal in Finder…</button>
           <span class="modal-actions-spacer"></span>
-          <button type="button" id="sync-start" class="btn primary" disabled>Sync</button>
+          <button type="button" id="sync-start" class="btn primary" disabled>Download</button>
           <button type="button" id="sync-cancel" class="btn">Cancel</button>
         </div>
       </div>
     </div>
     <div id="pull-modal" class="modal-overlay hidden" hidden>
       <div class="modal">
-        <h2 class="modal-title">Pull Remote Changes</h2>
+        <h2 class="modal-title">Check for Updates</h2>
         <div class="modal-body">
           <p id="pull-summary" class="sync-info"></p>
           <div class="sync-folder-row">
@@ -290,7 +292,7 @@
             <span>Include binary files (images, videos, etc.)</span>
           </label>
           <div id="pull-empty-notice" class="sync-notice info hidden" hidden>
-            <p class="sync-notice-text">No remote changes found in your synced files.</p>
+            <p class="sync-notice-text">No updates found in your downloaded files.</p>
           </div>
           <div id="pull-deleted-section" class="sync-selection hidden" hidden>
             <p class="sync-selection-label">Deleted remotely</p>
@@ -317,7 +319,7 @@
         </div>
         <div class="modal-actions">
           <span class="modal-actions-spacer"></span>
-          <button type="button" id="pull-start" class="btn primary" disabled>Pull</button>
+          <button type="button" id="pull-start" class="btn primary" disabled>Update</button>
           <button type="button" id="pull-cancel" class="btn">Cancel</button>
         </div>
       </div>

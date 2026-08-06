@@ -106,10 +106,10 @@ function renderPanelHeader(selectionCount, options) {
     const pullBtn = document.createElement('button');
     pullBtn.type = 'button';
     pullBtn.className = `s2-btn${hasPullChanges ? ' s2-btn-accent' : ''}`;
-    pullBtn.textContent = 'Pull…';
+    pullBtn.textContent = 'Check for updates…';
     pullBtn.disabled = !canPull;
     if (!canPull) {
-      pullBtn.title = 'Choose a local sync folder first';
+      pullBtn.title = 'Choose a local folder first';
     } else {
       pullBtn.removeAttribute('title');
     }
@@ -124,10 +124,10 @@ function renderPanelHeader(selectionCount, options) {
     const syncBtn = document.createElement('button');
     syncBtn.type = 'button';
     syncBtn.className = 's2-btn';
-    syncBtn.textContent = 'Sync selected…';
+    syncBtn.textContent = 'Download selected…';
     syncBtn.disabled = selectionCount === 0;
     if (selectionCount === 0) {
-      syncBtn.title = 'Select files or folders in the tree to sync';
+      syncBtn.title = 'Select files or folders in the tree to download';
     } else {
       syncBtn.removeAttribute('title');
     }

@@ -93,6 +93,19 @@ export function syncRoot(destRoot, org, repo) {
 }
 
 /**
+ * Path of the cached local-status summary (see {@link computeSyncSummary}),
+ * stored alongside the manifest under `.aem`.
+ *
+ * @param {string} destRoot
+ * @param {string} org
+ * @param {string} repo
+ * @returns {string}
+ */
+export function statusCachePath(destRoot, org, repo) {
+  return join(destRoot, org, repo, '.aem', 'status.json');
+}
+
+/**
  * @param {string} path
  * @returns {Promise<Buffer|null>}
  */
@@ -1199,6 +1212,93 @@ export async function localContentSummary({ destRoot, org, repo }) {
     hasContent: true,
     changeCount: modified.length + localNew.length + deleted.length,
   };
+}
+
+/**
+ * @typedef {{
+ *   fileCount: number,
+ *   syncedAt: string|null,
+ *   modifiedCount: number|null,
+ *   newCount: number|null,
+ *   deletedCount: number|null,
+ *   computedAt: string|null,
+ * }} SyncSummary
+ */
+
+/**
+ * Computes the local sync status for a connection from on-disk state (manifest
+ * plus a working-vs-original comparison) — no network — and caches it to
+ * `.aem/status.json` so it can be shown instantly next time. Returns null when
+ * nothing has been synced yet.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<SyncSummary|null>}
+ */
+export async function computeSyncSummary({ destRoot, org, repo }) {
+  if (!destRoot) {
+    return null;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath(destRoot, org, repo), 'utf8'));
+  } catch {
+    return null;
+  }
+
+  const { modified, localNew, deleted } = await checkPushStatus({ destRoot, org, repo });
+  const summary = {
+    fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0,
+    syncedAt: manifest.syncedAt || null,
+    modifiedCount: modified.length,
+    newCount: localNew.length,
+    deletedCount: deleted.length,
+    computedAt: new Date().toISOString(),
+  };
+
+  try {
+    await writeFile(
+      statusCachePath(destRoot, org, repo),
+      `${JSON.stringify(summary, null, 2)}\n`,
+      'utf8',
+    );
+  } catch {
+    // Best-effort cache; a failed write just means the next read recomputes.
+  }
+  return summary;
+}
+
+/**
+ * Fast, cached local sync status for instant display. Prefers the cached
+ * `.aem/status.json`; if it is missing, falls back to the manifest for the
+ * cheap fields (file count + last-synced) with modified counts left null so
+ * the caller can fill them in via {@link computeSyncSummary}. Returns null when
+ * nothing has been synced.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<SyncSummary|null>}
+ */
+export async function readCachedSyncSummary({ destRoot, org, repo }) {
+  if (!destRoot) {
+    return null;
+  }
+  try {
+    return JSON.parse(await readFile(statusCachePath(destRoot, org, repo), 'utf8'));
+  } catch {
+    // No cache yet — fall back to the manifest below.
+  }
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath(destRoot, org, repo), 'utf8'));
+    return {
+      fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0,
+      syncedAt: manifest.syncedAt || null,
+      modifiedCount: null,
+      newCount: null,
+      deletedCount: null,
+      computedAt: null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
