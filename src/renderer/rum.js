@@ -13,6 +13,13 @@ import { buildDesktopRumPath, desktopRumReferer } from './rum-paths.js';
 
 const RUM_STANDALONE_PATH = '/.rum/@adobe/helix-rum-js@^2/dist/rum-standalone.js';
 
+// helix-rum-js sampling rates → weight: on=1 (100%), high=10 (10%),
+// medium=100 (1%), low=1000 (0.1%), off=0. Dev samples at 10% so telemetry is
+// exercised without beaconing every interaction; production (unset) keeps the
+// library default of 100 (1%).
+const DEV_SAMPLE_RATE = 'high';
+const VALID_SAMPLE_RATES = new Set(['on', 'off', 'high', 'medium', 'low']);
+
 /**
  * Loads helix-rum-js through the local `/.rum` proxy. Sampling, `top`, and `click`
  * behave like a normal page load; virtual pageviews call {@link trackDesktopPageView}.
@@ -28,17 +35,19 @@ export async function initDesktopRum(getBaseUrl, isDev = async () => false) {
 
   window.RUM_BASE = baseUrl.replace(/\/+$/, '');
 
-  // file:// shell has no query string; force sampling in dev or via localStorage.
+  // file:// shell has no query string, so opt into sampling via a localStorage
+  // rate override (rum/optel = on|off|high|medium|low); otherwise dev falls
+  // back to DEV_SAMPLE_RATE and production uses the library default.
   try {
-    const force = localStorage.getItem('rum') || localStorage.getItem('optel');
-    if (force === 'on') {
-      window.SAMPLE_PAGEVIEWS_AT_RATE = 'on';
+    const override = localStorage.getItem('rum') || localStorage.getItem('optel');
+    if (override && VALID_SAMPLE_RATES.has(override)) {
+      window.SAMPLE_PAGEVIEWS_AT_RATE = override;
     }
   } catch {
     // localStorage unavailable
   }
   if (!window.SAMPLE_PAGEVIEWS_AT_RATE && await isDev()) {
-    window.SAMPLE_PAGEVIEWS_AT_RATE = 'on';
+    window.SAMPLE_PAGEVIEWS_AT_RATE = DEV_SAMPLE_RATE;
   }
 
   await new Promise((resolve, reject) => {
