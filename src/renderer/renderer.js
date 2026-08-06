@@ -30,7 +30,11 @@ import {
   renderReviewFileList, renderDiffView, wireReviewKeyboard,
   togglePathsCheckState,
 } from './review-view.js';
-import { renderDocumentView, renderDocumentDiffView } from './document-view.js';
+import {
+  renderDocumentView,
+  renderDocumentDiffView,
+  renderJsonTableView,
+} from './document-view.js';
 import { initDesktopRum, trackDesktopPageView } from './rum.js';
 
 const state = {
@@ -234,6 +238,7 @@ function trackShellPageView(overrides = {}) {
 function goHome() {
   showView('home');
   renderSites();
+  refreshSiteContent();
   trackShellPageView();
 }
 
@@ -826,7 +831,64 @@ async function loadBrowseCode(item) {
   }
 }
 
+/**
+ * Classifies a file by extension for the review content view.
+ *
+ * @param {string|null|undefined} daPath
+ * @returns {'html'|'json'|'other'}
+ */
+function fileKindFromDaPath(daPath) {
+  if (!daPath) {
+    return 'other';
+  }
+  const ext = daPath.split('.').pop().toLowerCase();
+  if (ext === 'html' || ext === 'htm') {
+    return 'html';
+  }
+  if (ext === 'json') {
+    return 'json';
+  }
+  return 'other';
+}
+
+async function loadJsonTableView(daPath, pane) {
+  setPanePlaceholder(pane, 'Loading table…');
+  try {
+    // Prefer the local working copy (review shows local edits); fall back to
+    // the remote source when there is no sync folder / working file.
+    let source = null;
+    if (syncFolder) {
+      source = await window.aemDesktop.getLocalSource(state.activeSiteId, syncFolder, daPath);
+    }
+    if (!source) {
+      source = await window.aemDesktop.getDaSource(state.activeSiteId, daPath);
+    }
+    if (!source || source.mode === 'binary') {
+      setPanePlaceholder(pane, 'No JSON content.');
+      return;
+    }
+    let data;
+    try {
+      data = JSON.parse(source.text);
+    } catch {
+      setPanePlaceholder(pane, 'Invalid JSON — cannot render table.');
+      return;
+    }
+    renderJsonTableView(pane, data);
+  } catch (err) {
+    if (isDaUnauthorizedError(err)) {
+      await refreshAuthStatus();
+      return;
+    }
+    setPanePlaceholder(pane, err.message || 'Failed to load table.');
+  }
+}
+
 async function loadDocumentViewForPath(daPath, pane) {
+  if (fileKindFromDaPath(daPath) === 'json') {
+    await loadJsonTableView(daPath, pane);
+    return;
+  }
   setPanePlaceholder(pane, 'Loading document…');
   try {
     // Local changes render as a track-changes diff against the synced
@@ -878,31 +940,46 @@ function refreshBrowseOpenedFile() {
   }
 }
 
+/**
+ * Applies the review segment/pane state for the focused file and returns the
+ * effective mode. Document + code are only offered for HTML and JSON; other
+ * (binary) files collapse to preview only, so their content shows in the
+ * browser. `reviewContentMode` stays the user's preference across files.
+ *
+ * @returns {ContentMode}
+ */
 function syncReviewContentView() {
-  if (reviewFocusPath) {
+  // Document + code (diff) are only meaningful for HTML and JSON. Binary /
+  // other files collapse to preview only, so we hide the whole mode toolbar
+  // and show the file in the browser preview.
+  const richEnabled = fileKindFromDaPath(reviewFocusPath) !== 'other';
+  if (reviewFocusPath && richEnabled) {
     show(els.reviewContentToolbar);
   } else {
     hide(els.reviewContentToolbar);
   }
 
-  reviewContentMode = setSegmentMode(
+  const effective = richEnabled ? reviewContentMode : 'preview';
+  const applied = setSegmentMode(
     els.reviewSegment,
     reviewSegmentButtons(),
-    reviewContentMode,
+    effective,
+    { codeEnabled: richEnabled },
   );
-  setPaneActive(reviewPanes(), reviewContentMode);
+  setPaneActive(reviewPanes(), applied);
+  return applied;
 }
 
 function setReviewContentMode(mode) {
   reviewContentMode = mode;
   saveContentMode(mode);
-  syncReviewContentView();
+  const applied = syncReviewContentView();
   if (!reviewFocusPath) {
     return;
   }
-  if (mode === 'preview') {
+  if (applied === 'preview') {
     loadReviewPreview(reviewFocusPath);
-  } else if (mode === 'document') {
+  } else if (applied === 'document') {
     loadReviewDocument(reviewFocusPath);
   }
 }
@@ -1170,7 +1247,7 @@ async function refreshLocalBadgesForFolder(daPath) {
   }
   const siteId = state.activeSiteId;
   try {
-    const { badges } = await window.aemDesktop.getLocalSyncBadges({
+    const { badges, localFolders } = await window.aemDesktop.getLocalSyncBadges({
       siteId,
       destFolder: syncFolder,
       folderPath: daPath,
@@ -1184,7 +1261,9 @@ async function refreshLocalBadgesForFolder(daPath) {
       return;
     }
     mergeSyncBadges(badges);
+    injectLocalFoldersForFolder(daPath, localFolders);
     injectLocalFilesForFolder(daPath);
+    paintFileTree();
   } catch {
     // ignore
   }
@@ -1315,18 +1394,80 @@ function renderSites() {
     btn.innerHTML = `<span class="site-name">${siteLabel(site)}</span><span class="site-branch">${site.branch}</span>`;
     btn.addEventListener('click', () => selectSite(site.id));
 
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'btn-icon remove-site';
-    removeBtn.title = 'Remove site';
-    removeBtn.textContent = '×';
+    li.append(btn, buildSiteRemoveControl(site));
+    els.siteList.append(li);
+  }
+}
+
+const TRASH_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">'
+  + '<path fill="currentColor" d="M7.5 2a1 1 0 0 0-1 1v.5H3.75a.75.75 0 0 0 0 1.5h.56l.83 10.13'
+  + 'A2 2 0 0 0 7.13 18h5.74a2 2 0 0 0 1.99-1.87L15.69 5h.56a.75.75 0 0 0 0-1.5H13.5V3a1 1 0 0 '
+  + '0-1-1h-5Zm4 1.5h-3V3h3v.5ZM8.5 7.5a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 '
+  + '8.5 7.5Zm3.75.75a.75.75 0 0 0-1.5 0v5a.75.75 0 0 0 1.5 0v-5Z"/></svg>';
+
+/**
+ * Builds the per-connection remove control: a trash button that deletes locally
+ * synced content when the connection has any, otherwise the plain × that
+ * removes the connection outright.
+ *
+ * @param {{ id: string }} site
+ * @returns {HTMLButtonElement}
+ */
+function buildSiteRemoveControl(site) {
+  const summary = siteContent[site.id];
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+
+  if (summary?.hasContent) {
+    removeBtn.className = 'btn-icon delete-site';
+    removeBtn.title = summary.changeCount > 0
+      ? 'Delete locally synced content (has unpushed changes)'
+      : 'Delete locally synced content';
+    removeBtn.innerHTML = TRASH_ICON;
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      removeSite(site.id);
+      deleteSiteContent(site.id);
     });
+    return removeBtn;
+  }
 
-    li.append(btn, removeBtn);
-    els.siteList.append(li);
+  removeBtn.className = 'btn-icon remove-site';
+  removeBtn.title = 'Remove site';
+  removeBtn.textContent = '×';
+  removeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeSite(site.id);
+  });
+  return removeBtn;
+}
+
+/**
+ * Refreshes the cached synced-content summary for every connection, then
+ * re-renders the list so trash/× controls reflect current on-disk state.
+ */
+async function refreshSiteContent() {
+  if (state.sites.length === 0) {
+    siteContent = {};
+    return;
+  }
+  try {
+    siteContent = await window.aemDesktop.getSitesLocalContent(syncFolder) || {};
+  } catch {
+    siteContent = {};
+  }
+  renderSites();
+}
+
+/**
+ * Prompts (in the main process) to delete a connection's locally synced
+ * content. The connection itself stays; on success the row reverts to ×.
+ *
+ * @param {string} siteId
+ */
+async function deleteSiteContent(siteId) {
+  const result = await window.aemDesktop.deleteSiteLocalContent(siteId, syncFolder);
+  if (result?.deleted) {
+    await refreshSiteContent();
   }
 }
 
@@ -1339,6 +1480,7 @@ async function loadSites() {
     }
   }
   renderSites();
+  await refreshSiteContent();
   if (state.view === 'browse' && state.activeSiteId) {
     await refreshTree();
   }
@@ -1403,6 +1545,12 @@ async function handleSignIn() {
 }
 
 let syncFolder = null;
+// siteId -> { hasContent: boolean, changeCount: number }; drives the overview
+// remove control (× to remove the connection vs. trash to delete local content).
+let siteContent = {};
+// Monotonic token identifying the current sync check; a new check bumps it so
+// progress/results from a superseded one (main process aborts it) are ignored.
+let syncCheckSeq = 0;
 let syncing = false;
 let syncedPath = null;
 let syncConflicts = [];
@@ -1935,6 +2083,31 @@ function injectLocalFilesForFolder(folderPath) {
   }
 }
 
+function injectLocalFolder(daPath) {
+  const lastSlash = daPath.lastIndexOf('/');
+  const parentPath = lastSlash > 0 ? daPath.slice(0, lastSlash) : '/';
+  const name = daPath.slice(lastSlash + 1);
+
+  const folder = state.tree.cache[parentPath];
+  if (!folder) {
+    return;
+  }
+  if (folder.some((item) => item.daPath === daPath)) {
+    return;
+  }
+  folder.push({ name, daPath, isFolder: true });
+}
+
+function injectLocalFoldersForFolder(folderPath, localFolders = []) {
+  for (const daPath of localFolders) {
+    const lastSlash = daPath.lastIndexOf('/');
+    const parent = lastSlash > 0 ? daPath.slice(0, lastSlash) : '/';
+    if (parent === folderPath) {
+      injectLocalFolder(daPath);
+    }
+  }
+}
+
 function formatCheckingSummary(discovered) {
   return `Checking… ${discovered.toLocaleString()} file${discovered === 1 ? '' : 's'} found`;
 }
@@ -1954,8 +2127,17 @@ async function runSyncCheck() {
   els.syncSelectionSummary.textContent = formatCheckingSummary(0);
   els.syncStart.disabled = true;
 
+  // Supersede any earlier run: bump the token so stale progress/results (from a
+  // check the main process is aborting, e.g. after toggling "include binaries")
+  // are ignored and don't reset the counter.
+  syncCheckSeq += 1;
+  const mySeq = syncCheckSeq;
+
   let removeCheckProgressListener = null;
   removeCheckProgressListener = window.aemDesktop.onSyncCheckProgress(({ discovered }) => {
+    if (mySeq !== syncCheckSeq) {
+      return;
+    }
     els.syncSelectionSummary.textContent = formatCheckingSummary(discovered);
   });
 
@@ -1968,6 +2150,10 @@ async function runSyncCheck() {
       includeBinaries: els.syncIncludeBinaries.checked,
     });
 
+    if (mySeq !== syncCheckSeq || status.aborted) {
+      return; // superseded by a newer check
+    }
+
     syncConflicts = status.conflicts || [];
     syncUnchanged = status.unchanged || [];
     syncModified = status.modified || [];
@@ -1978,6 +2164,9 @@ async function runSyncCheck() {
     renderSyncStatus(status);
     updateSyncStartEnabled();
   } catch (err) {
+    if (mySeq !== syncCheckSeq) {
+      return; // superseded by a newer check
+    }
     syncTotalFiles = 0;
     syncRequiresModifiedAck = false;
     syncRequiresConflictAck = false;
@@ -2016,6 +2205,10 @@ function openSyncModal() {
 }
 
 function closeSyncModal() {
+  // Stop any in-flight check so it isn't left listing the whole tree in the
+  // background, and invalidate its progress/result.
+  syncCheckSeq += 1;
+  window.aemDesktop.cancelSyncCheck();
   if (syncing) {
     window.aemDesktop.cancelSync();
   }
@@ -2169,15 +2362,16 @@ function paintReviewFileList() {
 }
 
 function showReviewDiff(daPath) {
+  const applied = syncReviewContentView();
   const file = reviewDiffs.find((d) => d.daPath === daPath);
-  if (file) {
+  // Code (diff) is only offered for HTML/JSON; skip it for binary files.
+  if (file && fileKindFromDaPath(daPath) !== 'other') {
     renderDiffView(els.reviewCodePane, file);
   }
   loadReviewPreview(daPath);
-  if (reviewContentMode === 'document') {
+  if (applied === 'document') {
     loadReviewDocument(daPath);
   }
-  syncReviewContentView();
 }
 
 function focusReviewFile(daPath) {
@@ -2263,14 +2457,10 @@ function renderReviewPlaceholder(message) {
   els.reviewCodePane.replaceChildren();
   els.reviewPreviewPane.replaceChildren();
   els.reviewDocumentPane.replaceChildren();
-  if (reviewContentMode === 'preview') {
-    setPanePlaceholder(els.reviewPreviewPane, message);
-  } else if (reviewContentMode === 'document') {
-    setPanePlaceholder(els.reviewDocumentPane, message);
-  } else {
-    setPanePlaceholder(els.reviewCodePane, message);
-  }
-  syncReviewContentView();
+  // Put the message in whichever pane sync ends up activating (with no file
+  // focused the toolbar is hidden and preview is the active pane).
+  const applied = syncReviewContentView();
+  setPanePlaceholder(reviewPanes()[applied], message);
 }
 
 async function loadReviewChanges() {

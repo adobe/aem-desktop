@@ -145,6 +145,30 @@ async function walkLocalDir(dir) {
 }
 
 /**
+ * Names of immediate child directories of a local folder, skipping `.aem` and
+ * dotfiles/dotdirs (mirrors {@link walkLocalDir}'s skip rules). Used to surface
+ * local-only folders that have no remote listing entry yet.
+ *
+ * @param {string} dir
+ * @returns {Promise<string[]>}
+ */
+async function listLocalChildDirs(dir) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const dirs = [];
+  for (const entry of entries) {
+    if (entry.isDirectory() && entry.name !== '.aem' && !entry.name.startsWith('.')) {
+      dirs.push(entry.name);
+    }
+  }
+  return dirs;
+}
+
+/**
  * Lists folder daPaths that have a corresponding directory under `.aem`
  * (i.e. content from that folder has been synced at least once).
  *
@@ -265,10 +289,13 @@ export async function checkLocalSyncBadges({
 
   await Promise.all(itemChecks);
 
+  /** @type {string[]} */
+  const localFolders = [];
   if (folderPath !== undefined) {
     const root = syncRoot(destRoot, org, repo);
     const segs = folderPath === '/' ? [] : folderPath.split('/').filter(Boolean);
     const localDir = join(root, ...segs);
+
     const localFiles = await walkLocalDir(localDir);
     for (const localPath of localFiles) {
       const rel = relative(root, localPath);
@@ -277,9 +304,25 @@ export async function checkLocalSyncBadges({
         badges[daPath] = 'new';
       }
     }
+
+    // Surface local-only child folders (created on disk but not in the remote
+    // listing) so they appear in the tree and can be expanded. Folders already
+    // in the remote listing are skipped; genuinely local ones are badged 'new'.
+    const remotePaths = new Set(items.map((item) => item.daPath));
+    const base = folderPath === '/' ? '' : folderPath;
+    for (const childName of await listLocalChildDirs(localDir)) {
+      const daPath = `${base}/${childName}`;
+      if (remotePaths.has(daPath)) {
+        continue; // eslint-disable-line no-continue
+      }
+      localFolders.push(daPath);
+      if (!badges[daPath]) {
+        badges[daPath] = 'new';
+      }
+    }
   }
 
-  return { syncedFolders, badges };
+  return { syncedFolders, badges, localFolders };
 }
 
 /**
@@ -659,6 +702,42 @@ export async function checkPullStatus({
 }
 
 /**
+ * Removes selection entries that are redundant for a recursive listing/sync:
+ * anything nested under another selected folder (already covered by that
+ * folder's recursive walk) plus exact duplicates. Without this, overlapping
+ * selections list/download the same subtrees repeatedly — hammering the admin
+ * API (429s) and inflating progress counts.
+ *
+ * @template {{ daPath: string, isFolder?: boolean }} T
+ * @param {T[]} items
+ * @returns {T[]}
+ */
+export function pruneSelectionForListing(items) {
+  const folderPaths = items.filter((i) => i.isFolder).map((i) => i.daPath);
+  const isUnderSelectedFolder = (daPath) => folderPaths.some((folder) => {
+    if (folder === daPath) {
+      return false;
+    }
+    const prefix = folder === '/' ? '/' : `${folder}/`;
+    return daPath.startsWith(prefix);
+  });
+
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    if (seen.has(item.daPath)) {
+      continue; // eslint-disable-line no-continue
+    }
+    seen.add(item.daPath);
+    if (isUnderSelectedFolder(item.daPath)) {
+      continue; // eslint-disable-line no-continue
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
  * Recursively collects all files under a DA folder (up to CONCURRENCY parallel list calls).
  *
  * @param {import('./content-api-client.js').ContentApiClient} client
@@ -809,7 +888,7 @@ export async function runSync({
   onProgress({ phase: 'listing', completed: 0, total: 0 });
 
   const filesToSync = [];
-  for (const item of items) {
+  for (const item of pruneSelectionForListing(items)) {
     if (signal?.aborted) {
       throw new Error('Sync cancelled');
     }
@@ -1082,6 +1161,58 @@ export async function checkPushStatus({ destRoot, org, repo }) {
   }
 
   return { modified, localNew, deleted };
+}
+
+/**
+ * Whether a connection has any locally synced content on disk (working copy,
+ * `.aem` originals, or manifest). Used to decide the overview remove control:
+ * a plain remove (×) when empty vs. a delete-content action (trash) when not.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<boolean>}
+ */
+export async function hasLocalContent({ destRoot, org, repo }) {
+  if (!destRoot) {
+    return false;
+  }
+  try {
+    const entries = await readdir(syncRoot(destRoot, org, repo));
+    return entries.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Local-content summary for the overview list: whether any content is synced
+ * and how many uncommitted local changes (modified + new + deleted) exist.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<{ hasContent: boolean, changeCount: number }>}
+ */
+export async function localContentSummary({ destRoot, org, repo }) {
+  if (!(await hasLocalContent({ destRoot, org, repo }))) {
+    return { hasContent: false, changeCount: 0 };
+  }
+  const { modified, localNew, deleted } = await checkPushStatus({ destRoot, org, repo });
+  return {
+    hasContent: true,
+    changeCount: modified.length + localNew.length + deleted.length,
+  };
+}
+
+/**
+ * Removes a connection's entire local sync directory (working copy, `.aem`
+ * originals, and manifest). No-op when nothing is synced.
+ *
+ * @param {{ destRoot: string, org: string, repo: string }} options
+ * @returns {Promise<void>}
+ */
+export async function deleteLocalContent({ destRoot, org, repo }) {
+  if (!destRoot) {
+    return;
+  }
+  await rm(syncRoot(destRoot, org, repo), { recursive: true, force: true });
 }
 
 /**

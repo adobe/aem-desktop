@@ -31,9 +31,14 @@ function rumLogger(log) {
   };
 }
 
+// `content-encoding` is intentionally NOT skipped: the upstream body is piped
+// through verbatim (rumUpstreamFetch uses raw https and never decompresses), so
+// its encoding header must survive for the browser to decode it. Dropping it
+// while serving gzip bytes makes the renderer parse binary as JS
+// ("Uncaught SyntaxError: Invalid or unexpected token"). `content-length` is
+// dropped because the response is re-chunked as it is piped.
 const SKIP_RESPONSE_HEADERS = new Set([
   'connection',
-  'content-encoding',
   'content-length',
   'content-security-policy',
   'keep-alive',

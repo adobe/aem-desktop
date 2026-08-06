@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   listSites: () => ipcRenderer.invoke('sites:list'),
   addSite: (url, apiBackend) => ipcRenderer.invoke('sites:add', { url, apiBackend }),
   removeSite: (id) => ipcRenderer.invoke('sites:remove', { id }),
+  getSitesLocalContent: (destFolder) => ipcRenderer.invoke('sites:local-content', { destFolder }),
+  deleteSiteLocalContent: (id, destFolder) => ipcRenderer.invoke(
+    'sites:delete-local',
+    { id, destFolder },
+  ),
 
   getDaAuthStatus: () => ipcRenderer.invoke('da:auth-status'),
   loginDa: () => ipcRenderer.invoke('da:login'),
@@ -37,6 +42,10 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   },
   listDa: (siteId, daPath) => ipcRenderer.invoke('da:list', { siteId, daPath }),
   getDaSource: (siteId, daPath) => ipcRenderer.invoke('da:get-source', { siteId, daPath }),
+  getLocalSource: (siteId, destFolder, daPath) => ipcRenderer.invoke(
+    'content:get-local',
+    { siteId, destFolder, daPath },
+  ),
   parseDocumentView: (html) => ipcRenderer.invoke('document:parse', { html }),
   getDocumentDiff: (siteId, destFolder, daPath) => ipcRenderer.invoke(
     'document:diff',
@@ -61,6 +70,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),
   setSyncFolder: (destFolder) => ipcRenderer.invoke('sync:set-folder', { destFolder }),
   checkSync: (options) => ipcRenderer.invoke('sync:check', options),
+  cancelSyncCheck: () => ipcRenderer.invoke('sync:check-cancel'),
   getLocalSyncBadges: (options) => ipcRenderer.invoke('sync:local-badges', options),
   runSync: (options) => ipcRenderer.invoke('sync:run', options),
   cancelSync: () => ipcRenderer.invoke('sync:cancel'),

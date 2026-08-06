@@ -205,3 +205,27 @@
   color: #cf222e;
   text-decoration: line-through;
 }
+
+/* JSON sheet table (review/browse document view for .json files) */
+.da-document-view .da-json-sheet-name {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #464646;
+}
+
+.da-document-view .da-json-table th {
+  text-transform: none;
+}
+
+.da-document-view .da-json-table tbody tr:first-child td {
+  background: transparent;
+  text-align: left;
+  font-weight: 400;
+  text-transform: none;
+}
+
+.da-document-view .da-json-table td {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -20,6 +20,8 @@ import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
   evaluatePullStatus, runPull,
+  hasLocalContent, localContentSummary, deleteLocalContent,
+  pruneSelectionForListing,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -307,6 +309,71 @@ test('checkLocalSyncBadges classifies listed files from manifest', async () => {
   }
 });
 
+test('checkLocalSyncBadges surfaces local-only folders as new', async () => {
+  const dest = join(tmpdir(), `aem-local-folder-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  try {
+    // A brand-new local folder that exists only on disk (not in the remote
+    // listing), with a file inside it.
+    await mkdir(join(workDir, 'drafts'), { recursive: true });
+    await writeFile(join(workDir, 'drafts', 'post.html'), 'draft');
+
+    const { localFolders, badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/',
+      items: [], // remote listing has no such folder
+    });
+
+    assert.deepEqual(localFolders, ['/drafts']);
+    assert.equal(badges['/drafts'], 'new');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('checkLocalSyncBadges does not duplicate folders present in the remote listing', async () => {
+  const dest = join(tmpdir(), `aem-local-folder-dup-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  try {
+    await mkdir(join(workDir, 'docs'), { recursive: true });
+
+    const { localFolders, badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/',
+      items: [{ daPath: '/docs', isFolder: true }], // already listed remotely
+    });
+
+    assert.deepEqual(localFolders, []);
+    assert.equal(badges['/docs'], undefined);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('checkLocalSyncBadges lists local-only child folders of a subfolder', async () => {
+  const dest = join(tmpdir(), `aem-local-folder-nested-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  try {
+    await mkdir(join(workDir, 'blog', 'drafts'), { recursive: true });
+
+    const { localFolders } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      folderPath: '/blog',
+      items: [],
+    });
+
+    assert.deepEqual(localFolders, ['/blog/drafts']);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
 test('evaluatePullStatus finds outdated and conflict files', async () => {
   const dest = join(tmpdir(), `aem-pull-test-${Date.now()}`);
   const workDir = join(dest, 'o', 'r');
@@ -421,4 +488,109 @@ test('runPull removes locally synced files deleted on the remote', async () => {
   } finally {
     await rm(dest, { recursive: true, force: true });
   }
+});
+
+test('hasLocalContent reflects presence of a synced directory', async () => {
+  assert.equal(await hasLocalContent({ destRoot: null, org: 'o', repo: 'r' }), false);
+
+  const dest = join(tmpdir(), `aem-sync-test-${Date.now()}-has`);
+  try {
+    assert.equal(await hasLocalContent({ destRoot: dest, org: 'o', repo: 'r' }), false);
+    await mkdir(join(dest, 'o', 'r', '.aem'), { recursive: true });
+    await writeFile(join(dest, 'o', 'r', '.aem', 'manifest.json'), '{"files":[]}');
+    assert.equal(await hasLocalContent({ destRoot: dest, org: 'o', repo: 'r' }), true);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('localContentSummary counts uncommitted local changes', async () => {
+  const dest = join(tmpdir(), `aem-sync-test-${Date.now()}-summary`);
+  const aemDir = join(dest, 'o', 'r', '.aem');
+  const workDir = join(dest, 'o', 'r');
+  try {
+    // No content synced yet.
+    let summary = await localContentSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(summary, { hasContent: false, changeCount: 0 });
+
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      files: [{ daPath: '/a.html' }, { daPath: '/b.html' }],
+    }));
+    // a.html modified locally, b.html unchanged, c.html is new/local-only.
+    await writeFile(join(aemDir, 'a.html'), 'original');
+    await writeFile(join(workDir, 'a.html'), 'changed');
+    await writeFile(join(aemDir, 'b.html'), 'same');
+    await writeFile(join(workDir, 'b.html'), 'same');
+    await writeFile(join(workDir, 'c.html'), 'brand new');
+
+    summary = await localContentSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.equal(summary.hasContent, true);
+    assert.equal(summary.changeCount, 2); // modified a.html + new c.html
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('deleteLocalContent removes the connection sync directory only', async () => {
+  const dest = join(tmpdir(), `aem-sync-test-${Date.now()}-del`);
+  try {
+    await mkdir(join(dest, 'o', 'r', '.aem'), { recursive: true });
+    await writeFile(join(dest, 'o', 'r', 'index.html'), 'hi');
+    // A second connection under the same sync folder must survive.
+    await mkdir(join(dest, 'o', 'other'), { recursive: true });
+    await writeFile(join(dest, 'o', 'other', 'keep.html'), 'keep');
+
+    await deleteLocalContent({ destRoot: dest, org: 'o', repo: 'r' });
+
+    await assert.rejects(stat(join(dest, 'o', 'r')));
+    await stat(join(dest, 'o', 'other', 'keep.html'));
+
+    // Deleting again is a no-op, not an error.
+    await deleteLocalContent({ destRoot: dest, org: 'o', repo: 'r' });
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('pruneSelectionForListing drops items nested under a selected folder', () => {
+  const items = [
+    { daPath: '/products', isFolder: true },
+    { daPath: '/products/shoes', isFolder: true },
+    { daPath: '/products/shoes/a.html', isFolder: false },
+    { daPath: '/about.html', isFolder: false },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/products', '/about.html']);
+});
+
+test('pruneSelectionForListing keeps sibling folders and removes duplicates', () => {
+  const items = [
+    { daPath: '/blog', isFolder: true },
+    { daPath: '/news', isFolder: true },
+    { daPath: '/blog', isFolder: true },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/blog', '/news']);
+});
+
+test('pruneSelectionForListing does not treat name-prefix siblings as nested', () => {
+  // '/foo-bar' is not under '/foo' — only '/foo/…' is.
+  const items = [
+    { daPath: '/foo', isFolder: true },
+    { daPath: '/foo-bar', isFolder: true },
+    { daPath: '/foo/child.html', isFolder: false },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/foo', '/foo-bar']);
+});
+
+test('pruneSelectionForListing collapses everything under a selected root', () => {
+  const items = [
+    { daPath: '/', isFolder: true },
+    { daPath: '/a', isFolder: true },
+    { daPath: '/a/b.html', isFolder: false },
+  ];
+  const pruned = pruneSelectionForListing(items);
+  assert.deepEqual(pruned.map((i) => i.daPath), ['/']);
 });
