@@ -11,7 +11,7 @@
  */
 /* eslint-disable no-use-before-define */
 
-import { loadIcons } from './icons.js';
+import { loadIcons, cloneIcon } from './icons.js';
 import { displayPath } from './entry-utils.js';
 import { renderFileTree } from './file-tree.js';
 import {
@@ -336,14 +336,6 @@ function syncSummaryNodes(summary) {
   return interleaveSeparators(items);
 }
 
-// GitHub octicon "sync" — the refresh glyph in front of the header pull button.
-const REFRESH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-  + '<path fill="currentColor" d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204'
-  + 'a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 '
-  + '1.05 8.84a.75.75 0 0 1 .656-.834Zm5.19-6.428a7.002 7.002 0 0 1 8.055 3.607.75.75 0 0 1-1.35.646 5.5 5.5 0 0 0'
-  + '-9.591-.033l1.204 1.204A.25.25 0 0 1 4.896 8H1.25A.25.25 0 0 1 1 7.75V4.104a.25.25 0 0 1 .427-.177l1.38 1.38'
-  + 'a7.001 7.001 0 0 1 4.088-3.73Z"/></svg>';
-
 /**
  * The inverted "synced …" refresh button that replaces the old Pull button:
  * clicking it pulls the latest content from AEM. Shows the last-synced time
@@ -357,16 +349,16 @@ function buildNavRefreshButton(summary) {
   btn.type = 'button';
   btn.className = 'nav-refresh';
 
-  const icon = document.createElement('span');
-  icon.className = 'nav-refresh-icon';
-  icon.setAttribute('aria-hidden', 'true');
-  icon.innerHTML = REFRESH_ICON;
+  const icon = cloneIcon(state.icons, 'refresh', 'btn-leading-icon');
+  if (icon) {
+    btn.append(icon);
+  }
 
   const label = document.createElement('span');
   const rel = summary && summary.syncedAt ? formatRelativeTime(summary.syncedAt) : '';
   label.textContent = rel ? `Updated ${rel}` : 'Check for updates';
 
-  btn.append(icon, label);
+  btn.append(label);
   btn.title = 'Check AEM for the latest content';
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1689,12 +1681,6 @@ function sortedSitesForOverview() {
   });
 }
 
-const TRASH_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">'
-  + '<path fill="currentColor" d="M7.5 2a1 1 0 0 0-1 1v.5H3.75a.75.75 0 0 0 0 1.5h.56l.83 10.13'
-  + 'A2 2 0 0 0 7.13 18h5.74a2 2 0 0 0 1.99-1.87L15.69 5h.56a.75.75 0 0 0 0-1.5H13.5V3a1 1 0 0 '
-  + '0-1-1h-5Zm4 1.5h-3V3h3v.5ZM8.5 7.5a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 '
-  + '8.5 7.5Zm3.75.75a.75.75 0 0 0-1.5 0v5a.75.75 0 0 0 1.5 0v-5Z"/></svg>';
-
 /**
  * Builds the per-connection remove control: a trash button that deletes locally
  * synced content when the connection has any, otherwise the plain × that
@@ -1713,7 +1699,10 @@ function buildSiteRemoveControl(site) {
     removeBtn.title = syncChangeCount(summary) > 0
       ? 'Delete downloaded content (has changes not yet uploaded)'
       : 'Delete downloaded content';
-    removeBtn.innerHTML = TRASH_ICON;
+    const icon = cloneIcon(state.icons, 'delete', 'btn-leading-icon');
+    if (icon) {
+      removeBtn.append(icon);
+    }
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteSiteContent(site.id);
@@ -2746,12 +2735,25 @@ function updateReviewActionButtons({ forceDisabled = false } = {}) {
   const busy = pushing || reverting;
   els.reviewPush.disabled = forceDisabled || busy || count === 0;
   els.reviewRevert.disabled = forceDisabled || busy || count === 0;
-  els.reviewPush.textContent = count > 0 && !forceDisabled
-    ? `Upload (${count})`
-    : 'Upload';
+  setButtonWithIcon(els.reviewPush, 'uploadToCloud', count > 0 && !forceDisabled ? `Upload (${count})` : 'Upload');
   els.reviewRevert.textContent = count > 0 && !forceDisabled
     ? `Revert selected (${count})`
     : 'Revert selected';
+}
+
+/**
+ * Sets a button's content to a leading S2 icon plus a text label (rebuilds so
+ * dynamic label changes keep the icon).
+ *
+ * @param {HTMLButtonElement} button
+ * @param {string} iconKey
+ * @param {string} label
+ */
+function setButtonWithIcon(button, iconKey, label) {
+  const text = document.createElement('span');
+  text.textContent = label;
+  const icon = cloneIcon(state.icons, iconKey, 'btn-leading-icon');
+  button.replaceChildren(...(icon ? [icon, text] : [text]));
 }
 
 function renderReviewPlaceholder(message) {
@@ -2936,7 +2938,7 @@ async function openPushModal() {
   reviewPreview.destroy();
   els.reviewPush.disabled = true;
   els.reviewRevert.disabled = true;
-  els.reviewPush.textContent = 'Upload';
+  setButtonWithIcon(els.reviewPush, 'uploadToCloud', 'Upload');
   els.reviewRevert.textContent = 'Revert selected';
   els.reviewCancel.textContent = 'Cancel';
   hide(els.reviewProgress);

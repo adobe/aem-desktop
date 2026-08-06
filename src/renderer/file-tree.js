@@ -77,7 +77,7 @@ export function renderFileTree(container, options) {
  */
 function renderPanelHeader(selectionCount, options) {
   const {
-    onSyncSelected, onPull, onPush, hasPushChanges, hasPullChanges, canPull,
+    onSyncSelected, onPull, onPush, hasPushChanges, hasPullChanges, canPull, icons,
   } = options;
   const header = document.createElement('div');
   header.className = 'file-tree-header';
@@ -124,7 +124,10 @@ function renderPanelHeader(selectionCount, options) {
     const syncBtn = document.createElement('button');
     syncBtn.type = 'button';
     syncBtn.className = 's2-btn';
-    syncBtn.textContent = 'Download selected…';
+    const dlIcon = cloneIcon(icons, 'download', 'btn-leading-icon');
+    const syncLabel = document.createElement('span');
+    syncLabel.textContent = 'Download selected…';
+    syncBtn.append(...(dlIcon ? [dlIcon, syncLabel] : [syncLabel]));
     syncBtn.disabled = selectionCount === 0;
     if (selectionCount === 0) {
       syncBtn.title = 'Select files or folders in the tree to download';

@@ -67,6 +67,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--s2-spacing-75);
   flex-shrink: 0;
   min-width: 0;
   min-height: var(--s2-button-s-height);

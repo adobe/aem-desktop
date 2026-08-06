@@ -17,6 +17,9 @@ const ICON_FILES = {
   table: 'S2_Icon_Table_20_N.svg',
   download: 'S2_Icon_Download_20_N.svg',
   upload: 'S2_Icon_Upload_20_N.svg',
+  uploadToCloud: 'S2_Icon_UploadToCloud_20_N.svg',
+  refresh: 'S2_Icon_Refresh_20_N.svg',
+  delete: 'S2_Icon_Delete_20_N.svg',
 };
 
 const ICONS_BASE = new URL('./icons/', import.meta.url);
@@ -43,9 +46,11 @@ export async function loadIcons() {
 /**
  * @param {Record<string, SVGSVGElement>|null} icons
  * @param {string} key
+ * @param {string} [className] class for the cloned SVG (default 'entry-icon',
+ *   the tree list style; buttons pass 'btn-leading-icon')
  * @returns {SVGElement|null}
  */
-export function cloneIcon(icons, key) {
+export function cloneIcon(icons, key, className = 'entry-icon') {
   const svg = icons?.[key];
   if (!svg) {
     return null;
@@ -55,6 +60,6 @@ export function cloneIcon(icons, key) {
   clone.removeAttribute('width');
   clone.removeAttribute('height');
   clone.setAttribute('aria-hidden', 'true');
-  clone.classList.add('entry-icon');
+  clone.classList.add(className);
   return clone;
 }

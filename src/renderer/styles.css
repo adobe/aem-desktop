@@ -210,14 +210,21 @@ body {
   filter: brightness(0.9);
 }
 
-.nav-refresh-icon {
-  display: inline-flex;
+.nav-refresh .btn-leading-icon {
+  width: 14px;
+  height: 14px;
 }
 
-.nav-refresh-icon svg {
+/* Leading S2 icon inside a button; follows the button's text color. */
+.btn-leading-icon {
   display: block;
-  width: 13px;
-  height: 13px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.btn-leading-icon :is(path, circle, rect, ellipse, line, polyline, polygon) {
+  fill: currentcolor;
 }
 
 .home-view {
