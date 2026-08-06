@@ -1,3 +1,21 @@
+# [1.10.0](https://github.com/adobe/aem-desktop/compare/v1.9.3...v1.10.0) (2026-08-06)
+
+
+### Bug Fixes
+
+* avoid redundant listing for overlapping sync selections ([c2a1ca2](https://github.com/adobe/aem-desktop/commit/c2a1ca26be9360719b4ffedb9927e678e79f522f))
+* preserve content-encoding in RUM proxy so scripts decode ([8bcc435](https://github.com/adobe/aem-desktop/commit/8bcc435f0c303fbca3cf6059429e1d21571aca68))
+* share the AEM API rate-limit pacer across clients ([e5ee1ac](https://github.com/adobe/aem-desktop/commit/e5ee1ac3122ad08c2b107ae5836911a3aa375b26))
+* show locally created folders in the content tree ([c92cba1](https://github.com/adobe/aem-desktop/commit/c92cba14b298266c0385a830da0bde91591597ba))
+* supersede the in-flight sync check instead of running a second ([1f74afc](https://github.com/adobe/aem-desktop/commit/1f74afcd166c7481e8b8ba6c8efa8935b4ad76ae))
+
+
+### Features
+
+* delete locally synced content from the sites overview ([e8d20c2](https://github.com/adobe/aem-desktop/commit/e8d20c2149963d814d12b66de54250bb624e741e))
+* log content-API requests when run from a terminal ([268b4e9](https://github.com/adobe/aem-desktop/commit/268b4e9f4527e0b7d366fa61374c82c84ea0e241))
+* tailor review content views by file type ([394153d](https://github.com/adobe/aem-desktop/commit/394153d53aeaf86d958f96789a56fe1aeb77612d))
+
 ## [1.9.3](https://github.com/adobe/aem-desktop/compare/v1.9.2...v1.9.3) (2026-07-30)
 
 
