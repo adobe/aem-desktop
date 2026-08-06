@@ -65,6 +65,7 @@ const els = {
   navOrg: document.getElementById('nav-org'),
   navRepo: document.getElementById('nav-repo'),
   navBranch: document.getElementById('nav-branch'),
+  navHomeIcon: document.getElementById('nav-home-icon'),
   navFavicon: document.getElementById('nav-favicon'),
   navStatus: document.getElementById('nav-status'),
   homeView: document.getElementById('home-view'),
@@ -1712,7 +1713,12 @@ function buildSiteRemoveControl(site) {
 
   removeBtn.className = 'btn-icon remove-site';
   removeBtn.title = 'Remove site';
-  removeBtn.textContent = '×';
+  const closeIcon = cloneIcon(state.icons, 'close', 'btn-leading-icon');
+  if (closeIcon) {
+    removeBtn.append(closeIcon);
+  } else {
+    removeBtn.textContent = '×';
+  }
   removeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     removeSite(site.id);
@@ -3573,6 +3579,12 @@ async function loadSyncFolderPreference() {
 async function init() {
   wireUi();
   state.icons = await loadIcons();
+  const backIcon = cloneIcon(state.icons, 'chevronLeft', 'nav-home-chevron');
+  if (backIcon) {
+    els.navHomeIcon.replaceChildren(backIcon);
+  } else {
+    els.navHomeIcon.textContent = '‹';
+  }
   await initDesktopRum(
     () => window.aemDesktop.getRumBaseUrl(),
     () => window.aemDesktop.isDev(),

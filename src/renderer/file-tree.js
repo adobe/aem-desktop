@@ -237,6 +237,10 @@ function renderTreeRow(item, isFolder, depth, options, rowOptions) {
     const chevron = document.createElement('span');
     chevron.className = 'chevron';
     chevron.setAttribute('aria-hidden', 'true');
+    const chevronIcon = cloneIcon(icons, 'chevronRight', 'chevron-icon');
+    if (chevronIcon) {
+      chevron.append(chevronIcon);
+    }
     chevron.addEventListener('click', (event) => {
       event.stopPropagation();
       onToggleFolder?.();

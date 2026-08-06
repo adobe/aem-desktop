@@ -20,6 +20,9 @@ const ICON_FILES = {
   uploadToCloud: 'S2_Icon_UploadToCloud_20_N.svg',
   refresh: 'S2_Icon_Refresh_20_N.svg',
   delete: 'S2_Icon_Delete_20_N.svg',
+  chevronRight: 'S2_Icon_ChevronRight_20_N.svg',
+  chevronLeft: 'S2_Icon_ChevronLeft_20_N.svg',
+  close: 'S2_Icon_Close_20_N.svg',
 };
 
 const ICONS_BASE = new URL('./icons/', import.meta.url);

@@ -76,7 +76,8 @@ body {
   align-items: center;
   gap: var(--s2-spacing-100);
   min-height: var(--s2-spacing-700);
-  padding: 0 var(--s2-spacing-200);
+  /* Left inset matches the tree chevron / CONTENT header (s2-spacing-100). */
+  padding: 0 var(--s2-spacing-200) 0 var(--s2-spacing-100);
   background: var(--rail-bg);
   border-bottom: 1px solid var(--rail-border);
 }
@@ -86,7 +87,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
-  padding: var(--s2-spacing-75) var(--s2-spacing-100);
+  padding: var(--s2-spacing-75) var(--s2-spacing-100) var(--s2-spacing-75) 0;
   border: none;
   border-radius: var(--s2-corner-radius-100);
   background: transparent;
@@ -102,9 +103,19 @@ body {
 }
 
 .nav-home-icon {
-  font-size: 1.25rem;
-  line-height: 1;
-  opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+}
+
+.nav-home-chevron {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+}
+
+.nav-home-chevron :is(path, circle, rect, ellipse, line, polyline, polygon) {
+  fill: currentcolor;
 }
 
 .nav-site {
@@ -506,6 +517,9 @@ body {
 
 .remove-site {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   color: var(--muted);
 }
