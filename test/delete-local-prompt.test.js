@@ -16,16 +16,16 @@ import { buildDeleteLocalPrompt } from '../src/main/delete-local-prompt.js';
 test('buildDeleteLocalPrompt names the connection and omits the warning with no changes', () => {
   const { message, detail } = buildDeleteLocalPrompt({ org: 'acme', repo: 'site' });
   assert.match(message, /acme\/site/);
-  assert.match(detail, /removes all locally synced content for acme\/site/);
+  assert.match(detail, /removes all content downloaded for acme\/site/);
   assert.doesNotMatch(detail, /Warning/);
 });
 
-test('buildDeleteLocalPrompt warns about unpushed changes (plural)', () => {
+test('buildDeleteLocalPrompt warns about un-uploaded changes (plural)', () => {
   const { detail } = buildDeleteLocalPrompt({ org: 'acme', repo: 'site', changeCount: 3 });
-  assert.match(detail, /Warning: 3 local changes have not been pushed and will be lost\./);
+  assert.match(detail, /Warning: 3 local changes have not been uploaded and will be lost\./);
 });
 
 test('buildDeleteLocalPrompt uses singular phrasing for one change', () => {
   const { detail } = buildDeleteLocalPrompt({ org: 'acme', repo: 'site', changeCount: 1 });
-  assert.match(detail, /Warning: 1 local change has not been pushed and will be lost\./);
+  assert.match(detail, /Warning: 1 local change has not been uploaded and will be lost\./);
 });

@@ -21,17 +21,17 @@
 export function buildDeleteLocalPrompt({ org, repo, changeCount = 0 }) {
   const label = `${org}/${repo}`;
   const lines = [
-    `This permanently removes all locally synced content for ${label} from your sync folder.`,
+    `This permanently removes all content downloaded for ${label} from your local folder.`,
   ];
   if (changeCount > 0) {
     const noun = changeCount === 1 ? 'change has' : 'changes have';
     lines.push('');
     lines.push(
-      `Warning: ${changeCount} local ${noun} not been pushed and will be lost.`,
+      `Warning: ${changeCount} local ${noun} not been uploaded and will be lost.`,
     );
   }
   return {
-    message: `Delete locally synced content for ${label}?`,
+    message: `Delete downloaded content for ${label}?`,
     detail: lines.join('\n'),
   };
 }

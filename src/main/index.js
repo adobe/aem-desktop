@@ -70,6 +70,7 @@ import {
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
   localContentSummary, deleteLocalContent, pruneSelectionForListing,
+  computeSyncSummary, readCachedSyncSummary,
 } from './da-sync.js';
 import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
 import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
@@ -483,15 +484,6 @@ ipcMain.handle('sites:remove', async (_event, { id }) => {
   return next;
 });
 
-ipcMain.handle('sites:local-content', async (_event, { destFolder }) => {
-  const sites = await ensureSitesLoaded();
-  const entries = await Promise.all(sites.map(async (site) => [
-    site.id,
-    await localContentSummary({ destRoot: destFolder, org: site.org, repo: site.repo }),
-  ]));
-  return Object.fromEntries(entries);
-});
-
 ipcMain.handle('sites:delete-local', async (_event, { id, destFolder }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, id);
@@ -514,7 +506,7 @@ ipcMain.handle('sites:delete-local', async (_event, { id, destFolder }) => {
     buttons: ['Cancel', 'Delete'],
     defaultId: 0,
     cancelId: 0,
-    title: 'Delete Synced Content',
+    title: 'Delete Downloaded Content',
     message,
     detail,
   });
@@ -686,6 +678,32 @@ ipcMain.handle('document:diff', async (_event, { siteId, destFolder, daPath }) =
 
 let syncAbortController = null;
 
+// Local-only sync status for the active site's header readout (file count,
+// locally-modified count, last-synced time). `fresh` recomputes + re-caches
+// (walks the working copy); otherwise the cached `.aem/status.json` is read for
+// instant display. Never contacts AEM.
+ipcMain.handle('sync:local-summary', async (_event, { siteId, destFolder, fresh }) => {
+  const sites = await ensureSitesLoaded();
+  const site = findSite(sites, siteId);
+  if (!site) {
+    throw new Error('Site not found');
+  }
+  const args = { destRoot: destFolder, org: site.org, repo: site.repo };
+  return fresh ? computeSyncSummary(args) : readCachedSyncSummary(args);
+});
+
+// Same, for every connection on the sites overview. Returns a map of
+// siteId -> summary (or null). `fresh` recomputes all; otherwise cached reads.
+ipcMain.handle('sites:local-summary', async (_event, { destFolder, fresh }) => {
+  const sites = await ensureSitesLoaded();
+  const read = fresh ? computeSyncSummary : readCachedSyncSummary;
+  const entries = await Promise.all(sites.map(async (site) => [
+    site.id,
+    await read({ destRoot: destFolder, org: site.org, repo: site.repo }),
+  ]));
+  return Object.fromEntries(entries);
+});
+
 ipcMain.handle('sync:get-folder', async () => loadSyncFolder(syncFolderStorePath()));
 
 ipcMain.handle('sync:set-folder', async (_event, { destFolder }) => {
@@ -696,7 +714,7 @@ ipcMain.handle('sync:set-folder', async (_event, { destFolder }) => {
 ipcMain.handle('sync:pick-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory', 'createDirectory'],
-    title: 'Choose sync destination',
+    title: 'Choose local folder',
     buttonLabel: 'Select Folder',
   });
   if (result.canceled || !result.filePaths.length) {

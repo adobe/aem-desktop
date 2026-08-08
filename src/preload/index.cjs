@@ -26,7 +26,10 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   listSites: () => ipcRenderer.invoke('sites:list'),
   addSite: (url, apiBackend) => ipcRenderer.invoke('sites:add', { url, apiBackend }),
   removeSite: (id) => ipcRenderer.invoke('sites:remove', { id }),
-  getSitesLocalContent: (destFolder) => ipcRenderer.invoke('sites:local-content', { destFolder }),
+  getSitesLocalSummary: (destFolder, fresh) => ipcRenderer.invoke(
+    'sites:local-summary',
+    { destFolder, fresh },
+  ),
   deleteSiteLocalContent: (id, destFolder) => ipcRenderer.invoke(
     'sites:delete-local',
     { id, destFolder },
@@ -68,6 +71,10 @@ contextBridge.exposeInMainWorld('aemDesktop', {
 
   pickSyncFolder: () => ipcRenderer.invoke('sync:pick-folder'),
   getSyncFolder: () => ipcRenderer.invoke('sync:get-folder'),
+  getLocalSyncSummary: (siteId, destFolder, fresh) => ipcRenderer.invoke(
+    'sync:local-summary',
+    { siteId, destFolder, fresh },
+  ),
   setSyncFolder: (destFolder) => ipcRenderer.invoke('sync:set-folder', { destFolder }),
   checkSync: (options) => ipcRenderer.invoke('sync:check', options),
   cancelSyncCheck: () => ipcRenderer.invoke('sync:check-cancel'),

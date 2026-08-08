@@ -21,7 +21,7 @@ import {
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
   evaluatePullStatus, runPull,
   hasLocalContent, localContentSummary, deleteLocalContent,
-  pruneSelectionForListing,
+  pruneSelectionForListing, computeSyncSummary, readCachedSyncSummary, statusCachePath,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -593,4 +593,72 @@ test('pruneSelectionForListing collapses everything under a selected root', () =
   ];
   const pruned = pruneSelectionForListing(items);
   assert.deepEqual(pruned.map((i) => i.daPath), ['/']);
+});
+
+test('computeSyncSummary reports counts + syncedAt and caches to status.json', async () => {
+  const dest = join(tmpdir(), `aem-local-summary-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  try {
+    assert.equal(await computeSyncSummary({ destRoot: dest, org: 'o', repo: 'r' }), null);
+
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      syncedAt: '2026-08-01T10:00:00.000Z',
+      files: [{ daPath: '/a.html' }, { daPath: '/b.html' }],
+    }));
+    // a.html modified locally, b.html unchanged, c.html new local-only.
+    await writeFile(join(aemDir, 'a.html'), 'orig');
+    await writeFile(join(workDir, 'a.html'), 'changed');
+    await writeFile(join(aemDir, 'b.html'), 'same');
+    await writeFile(join(workDir, 'b.html'), 'same');
+    await writeFile(join(workDir, 'c.html'), 'new');
+
+    const summary = await computeSyncSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.equal(summary.fileCount, 2);
+    assert.equal(summary.syncedAt, '2026-08-01T10:00:00.000Z');
+    assert.equal(summary.modifiedCount, 1);
+    assert.equal(summary.newCount, 1);
+    assert.equal(summary.deletedCount, 0);
+
+    // The summary was cached to .aem/status.json.
+    const cached = JSON.parse(await readFile(statusCachePath(dest, 'o', 'r'), 'utf8'));
+    assert.equal(cached.modifiedCount, 1);
+    assert.equal(cached.fileCount, 2);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('computeSyncSummary returns null without a destRoot', async () => {
+  assert.equal(await computeSyncSummary({ destRoot: null, org: 'o', repo: 'r' }), null);
+});
+
+test('readCachedSyncSummary prefers the cache, else falls back to the manifest', async () => {
+  const dest = join(tmpdir(), `aem-cached-summary-${Date.now()}`);
+  const aemDir = join(dest, 'o', 'r', '.aem');
+  try {
+    // No manifest, no cache → null.
+    assert.equal(await readCachedSyncSummary({ destRoot: dest, org: 'o', repo: 'r' }), null);
+
+    // Manifest only → cheap fields, modified counts null (to be filled fresh).
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      syncedAt: '2026-08-01T10:00:00.000Z',
+      files: [{ daPath: '/a.html' }],
+    }));
+    let cached = await readCachedSyncSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.equal(cached.fileCount, 1);
+    assert.equal(cached.syncedAt, '2026-08-01T10:00:00.000Z');
+    assert.equal(cached.modifiedCount, null);
+
+    // With a status cache → returned verbatim.
+    await writeFile(statusCachePath(dest, 'o', 'r'), JSON.stringify({
+      fileCount: 1, syncedAt: '2026-08-01T10:00:00.000Z', modifiedCount: 4, newCount: 0, deletedCount: 0,
+    }));
+    cached = await readCachedSyncSummary({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.equal(cached.modifiedCount, 4);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
 });

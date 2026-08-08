@@ -77,7 +77,7 @@ export function renderFileTree(container, options) {
  */
 function renderPanelHeader(selectionCount, options) {
   const {
-    onSyncSelected, onPull, onPush, hasPushChanges, hasPullChanges, canPull,
+    onSyncSelected, onPull, onPush, hasPushChanges, hasPullChanges, canPull, icons,
   } = options;
   const header = document.createElement('div');
   header.className = 'file-tree-header';
@@ -106,10 +106,10 @@ function renderPanelHeader(selectionCount, options) {
     const pullBtn = document.createElement('button');
     pullBtn.type = 'button';
     pullBtn.className = `s2-btn${hasPullChanges ? ' s2-btn-accent' : ''}`;
-    pullBtn.textContent = 'Pull…';
+    pullBtn.textContent = 'Check for updates…';
     pullBtn.disabled = !canPull;
     if (!canPull) {
-      pullBtn.title = 'Choose a local sync folder first';
+      pullBtn.title = 'Choose a local folder first';
     } else {
       pullBtn.removeAttribute('title');
     }
@@ -124,10 +124,13 @@ function renderPanelHeader(selectionCount, options) {
     const syncBtn = document.createElement('button');
     syncBtn.type = 'button';
     syncBtn.className = 's2-btn';
-    syncBtn.textContent = 'Sync selected…';
+    const dlIcon = cloneIcon(icons, 'download', 'btn-leading-icon');
+    const syncLabel = document.createElement('span');
+    syncLabel.textContent = 'Download selected…';
+    syncBtn.append(...(dlIcon ? [dlIcon, syncLabel] : [syncLabel]));
     syncBtn.disabled = selectionCount === 0;
     if (selectionCount === 0) {
-      syncBtn.title = 'Select files or folders in the tree to sync';
+      syncBtn.title = 'Select files or folders in the tree to download';
     } else {
       syncBtn.removeAttribute('title');
     }
@@ -234,6 +237,10 @@ function renderTreeRow(item, isFolder, depth, options, rowOptions) {
     const chevron = document.createElement('span');
     chevron.className = 'chevron';
     chevron.setAttribute('aria-hidden', 'true');
+    const chevronIcon = cloneIcon(icons, 'chevronRight', 'chevron-icon');
+    if (chevronIcon) {
+      chevron.append(chevronIcon);
+    }
     chevron.addEventListener('click', (event) => {
       event.stopPropagation();
       onToggleFolder?.();
