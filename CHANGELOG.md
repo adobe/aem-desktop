@@ -1,3 +1,12 @@
+# [1.11.0](https://github.com/adobe/aem-desktop/compare/v1.10.0...v1.11.0) (2026-08-08)
+
+
+### Features
+
+* bundle real Spectrum (S2) icons for the action buttons ([c8730a9](https://github.com/adobe/aem-desktop/commit/c8730a96bd3765098dc5ea462792af0f4760e6c9))
+* local sync status in header and overview, author-friendly terms ([32d8c24](https://github.com/adobe/aem-desktop/commit/32d8c2454fe446a2acd6872634ab454819b627c2))
+* replace × and chevron glyphs with Spectrum icons; align rail left inset ([dcad037](https://github.com/adobe/aem-desktop/commit/dcad037b28e14b7de0fdc4c20729969c21fb132d))
+
 # [1.10.0](https://github.com/adobe/aem-desktop/compare/v1.9.3...v1.10.0) (2026-08-06)
 
 
