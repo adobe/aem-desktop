@@ -73,6 +73,7 @@ import {
   computeSyncSummary, readCachedSyncSummary,
 } from './da-sync.js';
 import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
+import { applyExcludeGlobs } from './glob-exclude.js';
 import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
 import { startRumProxy } from './rum-proxy.js';
 import { withRequestLogging } from './http-log.js';
@@ -726,6 +727,36 @@ ipcMain.handle('sync:pick-folder', async () => {
 });
 
 let syncCheckAbortController = null;
+// Cached remote listing for the download dialog: { siteId, itemKey, files }.
+// Reused when only the binary/exclude filters change (and by the download
+// itself), so the tree is listed once per selection instead of on every
+// toggle / on Download.
+let syncListingCache = null;
+
+/**
+ * Stable key for a selection's remote listing (site + selected daPaths). The
+ * listing does not depend on the sync folder or the binary/exclude filters.
+ *
+ * @param {Array<{ daPath: string }>} items
+ * @returns {string}
+ */
+function selectionKey(items) {
+  return JSON.stringify(items.map((i) => i.daPath).sort());
+}
+
+/**
+ * @param {string} siteId
+ * @param {Array<{ daPath: string }>} items
+ * @returns {Array<object>|null} cached listing files for this selection, or null
+ */
+function cachedListingFor(siteId, items) {
+  if (syncListingCache
+    && syncListingCache.siteId === siteId
+    && syncListingCache.itemKey === selectionKey(items)) {
+    return syncListingCache.files;
+  }
+  return null;
+}
 
 ipcMain.handle('sync:check-cancel', () => {
   if (syncCheckAbortController) {
@@ -735,7 +766,7 @@ ipcMain.handle('sync:check-cancel', () => {
 });
 
 ipcMain.handle('sync:check', async (event, {
-  siteId, items, destFolder, includeBinaries,
+  siteId, items, destFolder, includeBinaries, excludeGlobs, reuseListing,
 }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -743,65 +774,68 @@ ipcMain.handle('sync:check', async (event, {
     throw new Error('Site not found');
   }
 
-  // Supersede any in-flight check (e.g. toggling "include binaries" mid-scan,
-  // or reopening the dialog) so the tree isn't listed twice at once and the
-  // two progress streams don't fight over the counter.
-  if (syncCheckAbortController) {
-    syncCheckAbortController.abort();
-  }
-  const controller = new AbortController();
-  syncCheckAbortController = controller;
-  const { signal } = controller;
-
   const checkLog = log.scope('sync-check');
-  try {
-    return await withContentClient(site, async (client) => {
-      const allFiles = [];
-      const reportProgress = (discovered) => {
-        if (!signal.aborted && !event.sender.isDestroyed()) {
-          event.sender.send('sync:check-progress', { discovered });
-        }
-      };
+  // The remote listing depends only on the site + selection (not the folder or
+  // the binary/exclude filters), so it is fetched once and cached; toggling
+  // filters re-runs only the local status against the cached listing.
+  const cached = reuseListing ? cachedListingFor(siteId, items) : null;
 
-      // Drop selections nested under another selected folder so overlapping
-      // multi-selections don't list the same subtree (and re-count) repeatedly.
-      const listItems = pruneSelectionForListing(items);
-      if (API_REQUEST_LOG_ENABLED) {
-        checkLog.info(`start: ${listItems.length} selected item(s), includeBinaries=${includeBinaries}`);
-      }
-      for (const item of listItems) {
-        if (signal.aborted) {
-          break;
-        }
-        if (item.isFolder) {
-          const base = allFiles.length;
-          // eslint-disable-next-line no-await-in-loop
-          const children = await collectFolder(
-            client,
-            site.org,
-            site.repo,
-            item.daPath,
-            includeBinaries,
-            signal,
-            ({ discovered }) => reportProgress(base + discovered),
-          );
-          allFiles.push(...children);
-          if (API_REQUEST_LOG_ENABLED) {
-            checkLog.info(`folder ${item.daPath}: +${children.length} (total ${allFiles.length})`);
+  let allFiles;
+  if (cached) {
+    allFiles = cached;
+    if (API_REQUEST_LOG_ENABLED) {
+      checkLog.info(`reuse cached listing: ${allFiles.length} file(s)`);
+    }
+  } else {
+    // Supersede any in-flight listing so the tree isn't listed twice at once.
+    if (syncCheckAbortController) {
+      syncCheckAbortController.abort();
+    }
+    const controller = new AbortController();
+    syncCheckAbortController = controller;
+    const { signal } = controller;
+    try {
+      const collected = await withContentClient(site, async (client) => {
+        const files = [];
+        const reportProgress = (discovered) => {
+          if (!signal.aborted && !event.sender.isDestroyed()) {
+            event.sender.send('sync:check-progress', { discovered });
           }
-        } else {
-          if (!includeBinaries && isBinaryExtension(item.ext)) {
-            // eslint-disable-next-line no-continue
-            continue;
-          }
-          allFiles.push({
-            daPath: item.daPath,
-            ext: item.ext,
-            lastModified: item.lastModified,
-          });
-          reportProgress(allFiles.length);
+        };
+        // Drop selections nested under another selected folder so overlapping
+        // multi-selections don't list the same subtree twice. Always list ALL
+        // files (binaries included) so filters apply in-memory without refetch.
+        const listItems = pruneSelectionForListing(items);
+        if (API_REQUEST_LOG_ENABLED) {
+          checkLog.info(`start: listing all files for ${listItems.length} selected item(s)`);
         }
-      }
+        for (const item of listItems) {
+          if (signal.aborted) {
+            break;
+          }
+          if (item.isFolder) {
+            const base = files.length;
+            // eslint-disable-next-line no-await-in-loop
+            const children = await collectFolder(
+              client,
+              site.org,
+              site.repo,
+              item.daPath,
+              true,
+              signal,
+              ({ discovered }) => reportProgress(base + discovered),
+            );
+            files.push(...children);
+            if (API_REQUEST_LOG_ENABLED) {
+              checkLog.info(`folder ${item.daPath}: +${children.length} (total ${files.length})`);
+            }
+          } else {
+            files.push({ daPath: item.daPath, ext: item.ext, lastModified: item.lastModified });
+            reportProgress(files.length);
+          }
+        }
+        return files;
+      });
 
       if (signal.aborted) {
         if (API_REQUEST_LOG_ENABLED) {
@@ -809,33 +843,37 @@ ipcMain.handle('sync:check', async (event, {
         }
         return { aborted: true };
       }
-
-      const filtered = includeBinaries
-        ? allFiles
-        : allFiles.filter((f) => !isBinaryExtension(f.ext));
-
-      const status = await checkSyncStatus({
-        destRoot: destFolder,
-        org: site.org,
-        repo: site.repo,
-        remoteFiles: filtered,
-        scopePaths: items.map((i) => i.daPath),
-      });
-
-      if (API_REQUEST_LOG_ENABLED) {
-        checkLog.info(`done: ${filtered.length} file(s) to consider`);
+      allFiles = collected;
+      syncListingCache = { siteId, itemKey: selectionKey(items), files: allFiles };
+    } finally {
+      if (syncCheckAbortController === controller) {
+        syncCheckAbortController = null;
       }
-      return { ...status, totalFiles: filtered.length };
-    });
-  } finally {
-    if (syncCheckAbortController === controller) {
-      syncCheckAbortController = null;
     }
   }
+
+  // In-memory filters (no network): binaries then exclude globs.
+  const binaryFiltered = includeBinaries
+    ? allFiles
+    : allFiles.filter((f) => !isBinaryExtension(f.ext));
+  const filtered = applyExcludeGlobs(binaryFiltered, excludeGlobs);
+
+  const status = await checkSyncStatus({
+    destRoot: destFolder,
+    org: site.org,
+    repo: site.repo,
+    remoteFiles: filtered,
+    scopePaths: items.map((i) => i.daPath),
+  });
+
+  if (API_REQUEST_LOG_ENABLED) {
+    checkLog.info(`done: ${filtered.length} file(s) to consider`);
+  }
+  return { ...status, totalFiles: filtered.length };
 });
 
 ipcMain.handle('sync:run', async (event, {
-  siteId, items, destFolder, includeBinaries, skipConflicts,
+  siteId, items, destFolder, includeBinaries, skipConflicts, excludeGlobs,
 }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -845,6 +883,10 @@ ipcMain.handle('sync:run', async (event, {
 
   syncAbortController = new AbortController();
   const { signal } = syncAbortController;
+
+  // Reuse the listing the pre-download check already fetched (same selection),
+  // so Download doesn't re-list the tree.
+  const precollectedFiles = cachedListingFor(siteId, items);
 
   try {
     const skip = skipConflicts?.length
@@ -857,6 +899,8 @@ ipcMain.handle('sync:run', async (event, {
       items,
       destRoot: destFolder,
       includeBinaries,
+      excludeGlobs,
+      precollectedFiles,
       skipPaths: skip,
       signal,
       onProgress: (data) => {
