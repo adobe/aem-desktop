@@ -15,6 +15,7 @@ import {
   buildAemApiBulkPublishUrl,
   buildAemApiJobUrl,
   buildAemApiListUrl,
+  buildAemApiLogUrl,
   buildAemApiSourceUrl,
   normalizeAemApiListEntry,
 } from './aem-admin-api.js';
@@ -420,6 +421,41 @@ export class ContentApiClient {
       throw await buildHttpError('GET', url, res, 'Job status failed');
     }
     return res.json();
+  }
+
+  /**
+   * Fetches audit-log entries in the [from, to] window (ISO-8601), following
+   * `nextToken` pagination. helix6 only. Used to detect source changes since
+   * the last "check for updates".
+   *
+   * @param {string} org
+   * @param {string} repo
+   * @param {{ from: string, to: string }} window
+   * @returns {Promise<{ entries: Array<object>, to: string }>}
+   */
+  async getLog(org, repo, { from, to }) {
+    this.assertHelix6Backend();
+    const entries = [];
+    let nextToken;
+    // Bound pagination so an old watermark can't spin forever; the caller falls
+    // back to per-file detection when the window is very large.
+    for (let page = 0; page < 50; page += 1) {
+      const url = buildAemApiLogUrl(org, repo, { from, to, nextToken });
+      const res = await this.fetch(url, { headers: this.authHeader, cache: 'reload' }); // eslint-disable-line no-await-in-loop
+      if (res.status === 401) {
+        throw await buildUnauthorizedError('GET', url, res); // eslint-disable-line no-await-in-loop
+      }
+      if (!res.ok) {
+        throw await buildHttpError('GET', url, res, `Log failed for ${org}/${repo}`); // eslint-disable-line no-await-in-loop
+      }
+      const body = await res.json(); // eslint-disable-line no-await-in-loop
+      entries.push(...(body.entries || []));
+      nextToken = body.nextToken;
+      if (!nextToken) {
+        break;
+      }
+    }
+    return { entries, to };
   }
 
   assertHelix6Backend() {

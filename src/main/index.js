@@ -72,7 +72,7 @@ import {
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
   localContentSummary, deleteLocalContent, pruneSelectionForListing,
-  computeSyncSummary, readCachedSyncSummary,
+  computeSyncSummary, readCachedSyncSummary, touchPullCheckedAt,
 } from './da-sync.js';
 import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
 import { applyExcludeGlobs } from './glob-exclude.js';
@@ -991,22 +991,37 @@ ipcMain.handle('pull:check', async (event, {
     throw new Error('Site not found');
   }
 
-  return withContentClient(site, (client) => checkPullStatus({
+  const status = await withContentClient(site, (client) => checkPullStatus({
     client,
     org: site.org,
     repo: site.repo,
     destRoot: destFolder,
     includeBinaries,
+    ref: site.branch,
     onProgress: (data) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('pull:check-progress', data);
       }
     },
   }));
+
+  // Requirement (2): even with nothing to pull, record that we just checked so
+  // the header's "Updated …" label resets. When there are changes, the
+  // watermark advances only once they're actually pulled (see pull:run).
+  if (status.totalCount === 0 && status.lastCheckedAt) {
+    await touchPullCheckedAt({
+      destRoot: destFolder,
+      org: site.org,
+      repo: site.repo,
+      lastCheckedAt: status.lastCheckedAt,
+    });
+  }
+
+  return status;
 });
 
 ipcMain.handle('pull:run', async (event, {
-  siteId, destFolder, files, deletions,
+  siteId, destFolder, files, deletions, lastCheckedAt,
 }) => {
   const sites = await ensureSitesLoaded();
   const site = findSite(sites, siteId);
@@ -1026,6 +1041,7 @@ ipcMain.handle('pull:run', async (event, {
       files,
       deletions,
       mediaOrigin: mediaOriginFor(site.previewUrl),
+      lastCheckedAt,
       signal,
       onProgress: (data) => {
         if (!event.sender.isDestroyed()) {

@@ -35,6 +35,7 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 | `src/main/dev-config.js`      | Pure dev helpers: CDP port + screenshot filename (unit tested)           |
 | `src/main/dev-reload.js`      | Renderer live-reload + console forwarding (dev only)                     |
 | `src/main/cli-install.js`     | Installs the `content` CLI launcher on PATH (pure builders unit tested)  |
+| `src/main/source-log.js`      | Pure reducer of api.aem.live audit-log entries → source changes (tested) |
 | `src/preload/index.cjs`       | Sandboxed `contextBridge` API — **the only CommonJS file** (see note)    |
 | `src/renderer/`               | `index.html` + `renderer.js` + `styles.css` — the UI shell              |
 | `src/cli/content.js`          | The `content` CLI entry (sites/download/update/upload); Node-only        |
