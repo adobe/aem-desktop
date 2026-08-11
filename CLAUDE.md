@@ -34,8 +34,11 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 | `src/main/logger.js`          | Shared `electron-log` logger (use instead of `console.log`)              |
 | `src/main/dev-config.js`      | Pure dev helpers: CDP port + screenshot filename (unit tested)           |
 | `src/main/dev-reload.js`      | Renderer live-reload + console forwarding (dev only)                     |
+| `src/main/cli-install.js`     | Installs the `content` CLI launcher on PATH (pure builders unit tested)  |
 | `src/preload/index.cjs`       | Sandboxed `contextBridge` API — **the only CommonJS file** (see note)    |
 | `src/renderer/`               | `index.html` + `renderer.js` + `styles.css` — the UI shell              |
+| `src/cli/content.js`          | The `content` CLI entry (sites/download/update/upload); Node-only        |
+| `src/cli/cli-lib.js`          | Pure CLI arg parser + site selector (unit tested)                        |
 | `scripts/dev.js`              | Dev launcher: runs Electron, restarts on main/preload change            |
 | `test/`                       | `node --test` unit + config integration tests                           |
 | `build/`                      | electron-builder resources (entitlements; add icons here)               |
@@ -70,6 +73,39 @@ renderer therefore has **no Node access** — everything crosses the
 
 A strict `Content-Security-Policy` is set in `index.html`. External links are
 forced into the system browser via `setWindowOpenHandler`.
+
+## Command-line interface (`content`)
+
+The app ships a companion CLI, `content`, exposing the most common operations
+(`sites`, `status`, `download`, `update`, `upload`). It lives in `src/cli/` and
+imports the same Node-safe core modules the main process uses (`da-sync.js`,
+`content-api-client.js`, the stores, `da-session.js`) — it never touches an
+Electron API, so it runs under plain Node **or** the bundled Electron binary in
+Node mode.
+
+- **Shared state.** The CLI reads the app's `sites.json`, `sync-folder.json`,
+  `.da-token.json`, and `.site-tokens.json` from the app's user-data directory.
+  It finds that directory via the `AEM_DESKTOP_USER_DATA` env var (set by the
+  installed launcher), falling back to Electron's default per-platform path. So
+  the CLI shares the desktop app's connections and sign-in; interactive login
+  still happens in the app (it needs a `BrowserWindow`).
+- **Install.** The **Install CLI** button on the home screen calls the
+  `cli:install` IPC handler → `installCli()` in `src/main/cli-install.js`, which
+  writes a small launcher (`content` on POSIX, `content.cmd` on Windows) to a
+  PATH directory (`/usr/local/bin` if writable, else `~/.local/bin`). The
+  launcher runs `ELECTRON_RUN_AS_NODE=1 <electron> <cli entry> "$@"` with
+  `AEM_DESKTOP_USER_DATA` pointed at the app's user-data dir — so it needs no
+  system Node install.
+- **Packaging.** `ELECTRON_RUN_AS_NODE` runs as vanilla Node and **cannot read
+  modules inside the asar**, so `electron-builder.yml` marks `src/cli/**` and
+  `src/main/**` as `asarUnpack`; the install handler points the launcher at the
+  unpacked `app.asar.unpacked/src/cli/content.js`.
+- **Safety.** `upload` mutates remote content, so it prompts for confirmation
+  (skip with `-y`/`--yes`; refuses in a non-TTY without it). `--dry-run` on
+  `update`/`upload` reports changes without applying them.
+- Keep pure CLI logic in `src/cli/cli-lib.js` (arg parsing, site selection) and
+  unit test it; the launcher-script builders in `cli-install.js` are pure and
+  tested too.
 
 ## Hot reload (bundler-free)
 

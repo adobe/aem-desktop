@@ -12,6 +12,14 @@ files:
   - '!**/*.test.js'
   - '!test/**/*'
 
+# The `content` CLI (src/cli) runs the Electron binary in Node mode
+# (ELECTRON_RUN_AS_NODE), which cannot read modules from inside the asar. Unpack
+# the CLI and the main-process modules it imports so they exist as real files
+# under app.asar.unpacked/ (see the cli:install handler in src/main/index.js).
+asarUnpack:
+  - src/cli/**
+  - src/main/**
+
 # Auto-update + release hosting. electron-updater reads latest-mac.yml from
 # the matching GitHub release at runtime to discover and download updates.
 publish:

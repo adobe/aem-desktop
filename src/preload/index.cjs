@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   captureScreenshot: () => ipcRenderer.invoke('dev:capture-screenshot'),
   isDev: () => ipcRenderer.invoke('app:is-dev'),
   openAppDevTools: () => ipcRenderer.invoke('dev:open-app-devtools'),
+  installCli: () => ipcRenderer.invoke('cli:install'),
 
   listSites: () => ipcRenderer.invoke('sites:list'),
   addSite: (url, apiBackend) => ipcRenderer.invoke('sites:add', { url, apiBackend }),
