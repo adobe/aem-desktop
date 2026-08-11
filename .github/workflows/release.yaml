@@ -94,7 +94,7 @@ jobs:
           -c.extraMetadata.version=${{ needs.version.outputs.version }}
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-mac
           path: |
@@ -145,7 +145,7 @@ jobs:
           -c.extraMetadata.version=${{ needs.version.outputs.version }}
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-win
           path: |
@@ -183,13 +183,13 @@ jobs:
       - run: npm ci
 
       - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: dist-mac
           path: dist
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: dist-win
           path: dist
