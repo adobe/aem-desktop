@@ -129,6 +129,11 @@ jobs:
       - run: npm ci
 
       - name: electron-builder (win, unsigned)
+        # Run under bash (Git Bash) so the `-c.extraMetadata.version=<v>` arg is
+        # parsed exactly like the macOS job. The Windows runner's default shell
+        # is PowerShell, which splits that token and makes electron-builder treat
+        # ".extraMetadata.version=<v>" as a config file path (ENOENT).
+        shell: bash
         # Windows code signing is not configured yet. Add a code-signing cert as
         # WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD secrets (and reference them here) to
         # sign; until then SmartScreen warns on first launch. Disabling auto
