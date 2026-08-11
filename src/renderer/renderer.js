@@ -93,6 +93,7 @@ const els = {
   syncPickFolder: document.getElementById('sync-pick-folder'),
   syncFolderPath: document.getElementById('sync-folder-path'),
   syncIncludeBinaries: document.getElementById('sync-include-binaries'),
+  syncExcludeGlobs: document.getElementById('sync-exclude-globs'),
   syncStart: document.getElementById('sync-start'),
   syncCancel: document.getElementById('sync-cancel'),
   syncSelectionList: document.getElementById('sync-selection-list'),
@@ -2410,7 +2411,7 @@ function formatCheckingSummary(discovered) {
   return `Checking… ${discovered.toLocaleString()} file${discovered === 1 ? '' : 's'} found`;
 }
 
-async function runSyncCheck() {
+async function runSyncCheck({ reuseListing = false } = {}) {
   if (!syncFolder || !state.activeSiteId) {
     syncTotalFiles = 0;
     syncRequiresModifiedAck = false;
@@ -2446,6 +2447,8 @@ async function runSyncCheck() {
       items,
       destFolder: syncFolder,
       includeBinaries: els.syncIncludeBinaries.checked,
+      excludeGlobs: els.syncExcludeGlobs.value,
+      reuseListing,
     });
 
     if (mySeq !== syncCheckSeq || status.aborted) {
@@ -2589,6 +2592,7 @@ async function startSync() {
       items,
       destFolder: syncFolder,
       includeBinaries: els.syncIncludeBinaries.checked,
+      excludeGlobs: els.syncExcludeGlobs.value,
       skipConflicts,
     });
 
@@ -3466,7 +3470,14 @@ function wireUi() {
   els.syncCancel.addEventListener('click', closeSyncModal);
   els.syncIncludeBinaries.addEventListener('change', () => {
     if (syncFolder && !syncing) {
-      runSyncCheck();
+      // Filters apply in-memory to the already-fetched listing — no refetch.
+      runSyncCheck({ reuseListing: true });
+    }
+  });
+  // Re-check when the exclude globs change (fires on blur/Enter, not each keystroke).
+  els.syncExcludeGlobs.addEventListener('change', () => {
+    if (syncFolder && !syncing) {
+      runSyncCheck({ reuseListing: true });
     }
   });
   els.syncOverwriteModified.addEventListener('change', updateSyncStartEnabled);

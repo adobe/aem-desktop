@@ -831,6 +831,38 @@ body {
   accent-color: var(--accent);
 }
 
+.sync-exclude {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.sync-exclude-label {
+  color: var(--muted);
+}
+
+.sync-exclude-input {
+  -webkit-app-region: no-drag;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--rail-border);
+  border-radius: 4px;
+  background: var(--s2-gray-50);
+  color: var(--fg);
+}
+
+.sync-exclude-input::placeholder {
+  color: var(--s2-gray-500);
+}
+
+.sync-exclude-input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
 .sync-progress-bar {
   height: 4px;
   background: var(--s2-gray-200);

@@ -19,6 +19,7 @@ import { toDaPath } from './aem-page-url.js';
 import { prettyPrintHtml } from './pretty-print.js';
 import { myersDiff, buildHunks } from './diff.js';
 import { contentTypeForUpload } from './content-api-shared.js';
+import { applyExcludeGlobs } from './glob-exclude.js';
 
 const TEXT_EXTENSIONS = new Set([
   'html', 'htm', 'json', 'css', 'js', 'mjs', 'xml', 'txt', 'md',
@@ -896,45 +897,57 @@ async function syncOneFile(client, org, repo, destRoot, file) {
  */
 export async function runSync({
   client, org, repo, items, destRoot, includeBinaries,
-  skipPaths, onProgress, signal,
+  excludeGlobs, skipPaths, onProgress, signal, precollectedFiles,
 }) {
   onProgress({ phase: 'listing', completed: 0, total: 0 });
 
-  const filesToSync = [];
-  for (const item of pruneSelectionForListing(items)) {
-    if (signal?.aborted) {
-      throw new Error('Sync cancelled');
-    }
-    if (item.isFolder) {
-      const base = filesToSync.length;
-      // eslint-disable-next-line no-await-in-loop
-      const children = await collectFolder(
-        client,
-        org,
-        repo,
-        item.daPath,
-        includeBinaries,
-        signal,
-        ({ discovered }) => {
-          onProgress({
-            phase: 'listing',
-            discovered: base + discovered,
-            total: 0,
-          });
-        },
-      );
-      filesToSync.push(...children);
-    } else {
-      if (!includeBinaries && isBinaryExtension(item.ext)) {
-        continue; // eslint-disable-line no-continue
+  // Reuse the listing already fetched by sync:check when available; otherwise
+  // list everything (binaries included) once. Filters are applied in-memory
+  // below so this matches the pre-download count exactly.
+  let collected;
+  if (precollectedFiles) {
+    collected = precollectedFiles;
+  } else {
+    collected = [];
+    for (const item of pruneSelectionForListing(items)) {
+      if (signal?.aborted) {
+        throw new Error('Sync cancelled');
       }
-      filesToSync.push({
-        daPath: item.daPath,
-        ext: item.ext,
-        lastModified: item.lastModified,
-      });
+      if (item.isFolder) {
+        const base = collected.length;
+        // eslint-disable-next-line no-await-in-loop
+        const children = await collectFolder(
+          client,
+          org,
+          repo,
+          item.daPath,
+          true,
+          signal,
+          ({ discovered }) => {
+            onProgress({
+              phase: 'listing',
+              discovered: base + discovered,
+              total: 0,
+            });
+          },
+        );
+        collected.push(...children);
+      } else {
+        collected.push({
+          daPath: item.daPath,
+          ext: item.ext,
+          lastModified: item.lastModified,
+        });
+      }
     }
   }
+
+  // Apply the same in-memory filters as the pre-download check: drop binaries
+  // (unless included) and anything matching the exclude globs.
+  const includeFiltered = includeBinaries
+    ? collected
+    : collected.filter((f) => !isBinaryExtension(f.ext));
+  const filesToSync = applyExcludeGlobs(includeFiltered, excludeGlobs);
 
   const prevManifestMap = new Map();
   try {

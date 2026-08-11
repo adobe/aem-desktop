@@ -239,6 +239,17 @@
             <input type="checkbox" id="sync-include-binaries" />
             <span>Include binary files (images, videos, etc.)</span>
           </label>
+          <label class="sync-exclude">
+            <span class="sync-exclude-label">Exclude paths</span>
+            <input
+              type="text"
+              id="sync-exclude-globs"
+              class="sync-exclude-input"
+              placeholder="e.g. */recipes/*, */drafts/*"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </label>
           <div id="sync-status" class="sync-status hidden" hidden></div>
           <div id="sync-local-new" class="sync-notice info hidden" hidden>
             <p id="sync-local-new-text" class="sync-notice-text"></p>
