@@ -35,8 +35,10 @@ import {
   runSync, checkPullStatus, runPull, checkPushStatus, runPush,
   readCachedSyncSummary, syncRoot,
 } from '../main/da-sync.js';
+import { mediaOriginFor } from '../main/media-path-transform.js';
+import { deriveSiteHosts } from '../main/media-references.js';
 import {
-  parseArgs, resolveSite, siteLabel, parseExcludeArg, pathsToSyncItems,
+  parseArgs, resolveSite, siteLabel, pathsToSyncItems,
 } from './cli-lib.js';
 
 // Store filenames. DA_TOKEN_FILENAME is exported by da-auth.js; these two are
@@ -238,7 +240,7 @@ async function cmdDownload(selector, paths, flags) {
   const destFolder = await resolveDestFolder(flags);
   const items = pathsToSyncItems(paths);
   const includeBinaries = flags['include-binaries'] === true;
-  const excludeGlobs = parseExcludeArg(flags.exclude);
+  const excludeGlobs = typeof flags.exclude === 'string' ? flags.exclude : undefined;
   const client = await makeClient(site, { verbose: flags.v === true || flags.verbose === true });
 
   console.error(`Downloading ${siteLabel(site)} → ${destFolder}`);
@@ -249,6 +251,8 @@ async function cmdDownload(selector, paths, flags) {
     items,
     destRoot: destFolder,
     includeBinaries,
+    excludeGlobs,
+    mediaOrigin: mediaOriginFor(site.previewUrl),
     onProgress: (data) => {
       if (data.phase === 'listing') {
         progress(`Listing… ${data.discovered ?? 0} file(s)`);
@@ -258,12 +262,6 @@ async function cmdDownload(selector, paths, flags) {
     },
   });
   progressEnd();
-
-  // The bundled runSync on main does not filter excludes itself; note when the
-  // user asked for excludes so the behaviour is not silently ignored.
-  if (excludeGlobs.length) {
-    console.error(`Note: --exclude is ignored by this build (${excludeGlobs.join(', ')}).`);
-  }
 
   const dest = syncRoot(destFolder, site.org, site.repo);
   console.log(`Downloaded ${manifest.files.length} file(s) to ${dest}`);
@@ -305,6 +303,7 @@ async function cmdUpdate(selector, flags) {
     destRoot: destFolder,
     files: status.files,
     deletions: status.deletions,
+    mediaOrigin: mediaOriginFor(site.previewUrl),
     onProgress: (data) => progress(`Applying ${data.completed}/${data.total}…`),
   });
   progressEnd();
@@ -358,6 +357,7 @@ async function cmdUpload(selector, flags) {
     destRoot: destFolder,
     filesToPush,
     filesToDelete,
+    mediaHosts: deriveSiteHosts(site.previewUrl),
     onProgress: (data) => progress(`${data.phase} ${data.completed}/${data.total}…`),
   });
   progressEnd();
