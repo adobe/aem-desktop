@@ -17,7 +17,7 @@ import {
   mkdir, writeFile, rm, readFile, stat,
 } from 'node:fs/promises';
 import {
-  isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
+  isBinaryExtension, isPushableLocalNewFile, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
   evaluatePullStatus, runPull, runSync, runPush, checkPushStatus,
   hasLocalContent, localContentSummary, deleteLocalContent,
@@ -730,4 +730,16 @@ test('media transform round-trips: download rewrites working, push sends ./media
   } finally {
     await rm(dest, { recursive: true, force: true });
   }
+});
+
+test('isPushableLocalNewFile allows html/json/ico at the root, hides other root artifacts', () => {
+  // Root-level: only .html, .json, and .ico (favicon) count as new content.
+  assert.equal(isPushableLocalNewFile('/index.html'), true);
+  assert.equal(isPushableLocalNewFile('/config.json'), true);
+  assert.equal(isPushableLocalNewFile('/favicon.ico'), true);
+  assert.equal(isPushableLocalNewFile('/notes.csv'), false);
+  assert.equal(isPushableLocalNewFile('/hero.png'), false);
+  // Nested files of any extension are always pushable.
+  assert.equal(isPushableLocalNewFile('/assets/favicon.ico'), true);
+  assert.equal(isPushableLocalNewFile('/blog/hero.png'), true);
 });

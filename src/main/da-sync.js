@@ -44,11 +44,12 @@ export function isBinaryExtension(ext) {
   return !TEXT_EXTENSIONS.has(ext.toLowerCase());
 }
 
-const PUSHABLE_ROOT_EXTENSIONS = new Set(['html', 'json']);
+const PUSHABLE_ROOT_EXTENSIONS = new Set(['html', 'json', 'ico']);
 
 /**
- * Root-level files that are not .html or .json are local tooling artifacts
- * (CSVs, scripts, notes) and should not appear in push/sync diffs as new.
+ * Root-level files that are not .html, .json, or .ico (favicon) are local
+ * tooling artifacts (CSVs, scripts, notes) and should not appear in push/sync
+ * diffs as new.
  *
  * @param {string} daPath
  * @returns {boolean}
