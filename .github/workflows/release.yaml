@@ -13,11 +13,157 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
-    # macOS runner is required to build, sign and notarize the DMG.
+  # 1) Lint + test, and compute the next version once so the platform build jobs
+  #    can stamp their artifacts with it (electron-builder -c.extraMetadata.version).
+  #    Uses a semantic-release dry-run against the same commit the publish job
+  #    later releases, so the version is deterministic across jobs.
+  version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.sr.outputs.version }}
+      publish: ${{ steps.sr.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+      - name: Compute next version (semantic-release dry-run)
+        id: sr
+        env:
+          # The admin PAT (not the default token) so the github plugin's
+          # verifyConditions permission check passes; the dry-run never pushes.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -o pipefail
+          npx semantic-release --dry-run 2>&1 | tee sr.log || true
+          if grep -qE 'The next release version is' sr.log; then
+            VERSION=$(grep -oE 'The next release version is [0-9]+\.[0-9]+\.[0-9]+' sr.log \
+              | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Next release version: $VERSION"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "No relevant changes; nothing to release."
+          fi
+
+  # 2a) macOS: build, sign, notarize. Uploads the artifacts for the publish job.
+  build-mac:
+    name: Build macOS (signed + notarized)
+    needs: version
+    if: needs.version.outputs.publish == 'true'
     runs-on: macos-latest
     timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - run: npm ci
+
+      - name: electron-builder (mac, signed + notarized)
+        env:
+          # Developer ID Application certificate, base64-encoded .p12 + password.
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # Notarization credentials (Apple ID app-specific password flow).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >-
+          npx electron-builder --mac --publish never
+          -c.extraMetadata.version=${{ needs.version.outputs.version }}
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-mac
+          path: |
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/*.zip
+            dist/*.zip.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 1
+
+  # 2b) Windows: build the NSIS installer. Unsigned for now (see note); still
+  #     produces latest.yml so electron-updater auto-update works on Windows.
+  build-win:
+    name: Build Windows (unsigned)
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - run: npm ci
+
+      - name: electron-builder (win, unsigned)
+        # Run under bash (Git Bash) so the `-c.extraMetadata.version=<v>` arg is
+        # parsed exactly like the macOS job. The Windows runner's default shell
+        # is PowerShell, which splits that token and makes electron-builder treat
+        # ".extraMetadata.version=<v>" as a config file path (ENOENT).
+        shell: bash
+        # Windows code signing is not configured yet. Add a code-signing cert as
+        # WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD secrets (and reference them here) to
+        # sign; until then SmartScreen warns on first launch. Disabling auto
+        # identity discovery keeps electron-builder from erroring on no cert.
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: >-
+          npx electron-builder --win --publish never
+          -c.extraMetadata.version=${{ needs.version.outputs.version }}
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-win
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 1
+
+  # 3) Publish: recompute the (identical) version, update changelog/package.json,
+  #    create the GitHub release, and attach the prebuilt mac + win artifacts.
+  #    SEMANTIC_RELEASE_SKIP_BUILD=true makes the exec step skip rebuilding.
+  release:
+    name: Publish release
+    needs: [version, build-mac, build-win]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       issues: write
@@ -35,10 +181,20 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm run lint
-      - run: npm test
 
-      - name: Release (semantic-release builds, signs & notarizes)
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-mac
+          path: dist
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-win
+          path: dist
+
+      - name: Release (semantic-release attaches prebuilt artifacts)
         env:
           # Admin-owned PAT, NOT the default GITHUB_TOKEN. The `main-protection`
           # ruleset requires the "Test" status check on every push to main, and
@@ -48,11 +204,6 @@ jobs:
           # admin pushes the release commit/tag through. `[skip ci]` in the commit
           # message keeps this PAT push from triggering a recursive workflow run.
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          # Developer ID Application certificate, base64-encoded .p12 + password.
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # Notarization credentials (Apple ID app-specific password flow).
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Attach the mac + win artifacts downloaded above instead of rebuilding.
+          SEMANTIC_RELEASE_SKIP_BUILD: 'true'
         run: npx semantic-release

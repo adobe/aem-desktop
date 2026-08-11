@@ -41,7 +41,7 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 | `build/`                      | electron-builder resources (entitlements; add icons here)               |
 | `electron-builder.yml`        | Packaging, signing, notarization, DMG layout, GitHub publish target     |
 | `.releaserc.cjs`              | semantic-release plugin chain (build → attach artifacts → tag)           |
-| `.github/workflows/`          | `main.yaml` (lint/test/build smoke), `release.yaml` (signed release)     |
+| `.github/workflows/`          | `main.yaml` (lint/test/build smoke on mac+win), `release.yaml` (mac+win release) |
 
 ## Commands
 
@@ -124,25 +124,41 @@ latest release, downloads in the background, and installs on quit
 (`autoInstallOnAppQuit`). Updates are **disabled in development** and can be
 force-disabled with `AEM_DESKTOP_DISABLE_UPDATES=1` (see `update-policy.js`).
 
-The macOS update channel needs the **ZIP** target plus `latest-mac.yml`; both
-are produced by electron-builder and attached to each GitHub release by
-semantic-release. Auto-update only works on a **signed + notarized** build.
-Builds are **Apple Silicon (arm64) only** — Intel Macs are EOL, so no x64 target.
+The macOS update channel needs the **ZIP** target plus `latest-mac.yml`; the
+Windows channel uses the **NSIS** installer plus `latest.yml`. All are produced
+by electron-builder and attached to each GitHub release by semantic-release.
+electron-updater picks the right feed per platform automatically. macOS
+auto-update only works on a **signed + notarized** build; Windows auto-update
+works even unsigned (SmartScreen just warns until a cert is added).
+macOS builds are **Apple Silicon (arm64) only** — Intel Macs are EOL; Windows
+builds are **x64 only** (add an `arm64` entry under `win.target` to also ship
+Windows-on-ARM).
 
 ## Release pipeline
 
 Releases are fully automated by `.github/workflows/release.yaml` on every push
-to `main`, via semantic-release (`.releaserc.cjs`):
+to `main`. Because macOS artifacts must be built/signed on a macOS runner and
+Windows on a Windows runner, the workflow is **four jobs**:
 
-1. **commit-analyzer / release-notes-generator** — derive the next version and
-   notes from Conventional Commits.
-2. **changelog** — update `CHANGELOG.md`.
-3. **npm** (`npmPublish: false`) — bump the version in `package.json`.
-4. **exec** — `electron-builder --mac --publish never -c.extraMetadata.version=<v>`
-   builds, signs, and notarizes the DMG + ZIP + `latest-mac.yml`.
-5. **github** — create the GitHub release and attach the DMG, ZIP, blockmaps,
-   and `latest-mac.yml` (the feed electron-updater reads).
-6. **git** — commit the version/changelog bump as `chore(release): <v>`.
+1. **version** (Linux) — lint + test, then a `semantic-release --dry-run` to
+   compute the next version once. Skips the rest if there's nothing to release.
+2. **build-mac** (macOS) — `electron-builder --mac` (signed + notarized),
+   stamped with the computed version; uploads the DMG/ZIP/blockmaps/`latest-mac.yml`
+   as a workflow artifact.
+3. **build-win** (Windows) — `electron-builder --win` (currently **unsigned**),
+   same version; uploads the NSIS `.exe`/blockmap/`latest.yml`.
+4. **release** (Linux) — downloads both artifact sets into `dist/`, then runs
+   semantic-release with `SEMANTIC_RELEASE_SKIP_BUILD=true` so its **exec** step
+   attaches the prebuilt files instead of rebuilding. semantic-release still runs
+   **commit-analyzer/release-notes**, **changelog**, **npm** (`npmPublish: false`
+   version bump), **github** (create release + attach mac & win assets), and
+   **git** (commit the bump as `chore(release): <v>`).
+
+> **Why compute the version in a separate job?** electron-builder stamps each
+> artifact's filename and the `latest*.yml` feed with the version
+> (`-c.extraMetadata.version=<v>`), so the platform builders need it *before*
+> semantic-release runs for real. All four jobs check out the same commit, so
+> the dry-run version and the final release version are identical.
 
 ### Required GitHub secrets (signing + notarization)
 
@@ -153,10 +169,16 @@ to `main`, via semantic-release (`.releaserc.cjs`):
 | `APPLE_ID`                     | Apple ID for notarization                          |
 | `APPLE_APP_SPECIFIC_PASSWORD`  | App-specific password for that Apple ID            |
 | `APPLE_TEAM_ID`                | Apple Developer Team ID                            |
-| `RELEASE_TOKEN`                | Admin-owned PAT used as `GITHUB_TOKEN` for the release; bypasses the `main-protection` ruleset so the `chore(release)` commit/tag can push to `main` |
+| `RELEASE_TOKEN`                | Admin-owned PAT used as `GITHUB_TOKEN` for the release (and the version-detection dry-run); bypasses the `main-protection` ruleset so the `chore(release)` commit/tag can push to `main` |
 
-Until the Apple secrets exist, `release.yaml` builds will fail at signing;
-`main.yaml` always runs an **unsigned** packaging smoke test so config stays green.
+Windows signing is **not configured yet** — the Windows job builds unsigned.
+To sign later, add a code-signing certificate as `WIN_CSC_LINK` /
+`WIN_CSC_KEY_PASSWORD` secrets (or wire up a cloud-HSM signer such as Azure
+Trusted Signing) and reference them in the `build-win` job.
+
+Until the Apple secrets exist, `release.yaml`'s macOS job will fail at signing;
+`main.yaml` always runs an **unsigned** packaging smoke test on **both** macOS
+and Windows so config stays green.
 
 > **Why a PAT and not the default `GITHUB_TOKEN`?** The `main-protection`
 > ruleset requires the `Test` status check on every push to `main`. The

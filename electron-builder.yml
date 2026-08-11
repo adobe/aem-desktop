@@ -49,3 +49,24 @@ dmg:
       y: 220
       type: link
       path: /Applications
+
+win:
+  # Same space-free artifact name rationale as mac (GitHub rewrites spaces in
+  # uploaded asset names, which would break the latest.yml URLs auto-update reads).
+  artifactName: AEM-Desktop-${version}-${arch}.${ext}
+  # The Windows .ico is generated from build/icon.png (1024x1024) at build time.
+  # Windows code signing is not configured yet: builds are unsigned until a
+  # code-signing certificate and WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD secrets
+  # are added, so SmartScreen will warn on first launch.
+  target:
+    # NSIS is the user-facing installer and produces the latest.yml feed that
+    # electron-updater reads on Windows. x64 only for now (Windows-on-ARM is
+    # niche; add an arm64 entry here to also ship it).
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
