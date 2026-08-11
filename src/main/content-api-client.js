@@ -281,40 +281,54 @@ export class ContentApiClient {
    * @param {string} contentType
    * @returns {Promise<void>}
    */
-  async uploadSource(org, repo, daPath, data, contentType) {
+  async uploadSource(org, repo, daPath, data, contentType, { preferPost = false } = {}) {
     const normalized = normalizeDaPath(daPath);
     const url = this.backend === API_BACKEND_AEM_API
       ? buildAemApiSourceUrl(org, repo, normalized)
       : buildDaLiveSourceUrl(org, repo, normalized);
     const body = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
 
-    const putRes = await this.fetch(url, {
+    // PUT replaces a document as-is; POST creates it and interns external images
+    // (see buildPostUploadRequest). Callers pick the primary method by content:
+    // documents whose images are all same-origin media-bus refs PUT, ones with
+    // external images POST. The other method stays a 400 safety net either way.
+    const put = () => this.fetch(url, {
       method: 'PUT',
       headers: { ...this.authHeader, 'Content-Type': contentType },
       body,
     });
-    if (putRes.status === 401) {
-      throw await buildUnauthorizedError('PUT', url, putRes);
+    const post = () => {
+      const req = buildPostUploadRequest(this.backend, body, contentType, normalized);
+      return this.fetch(url, {
+        method: 'POST',
+        headers: { ...this.authHeader, ...req.headers },
+        body: req.body,
+      });
+    };
+
+    const primaryMethod = preferPost ? 'POST' : 'PUT';
+    const secondaryMethod = preferPost ? 'PUT' : 'POST';
+    const primary = preferPost ? post : put;
+    const secondary = preferPost ? put : post;
+
+    const res = await primary();
+    if (res.status === 401) {
+      throw await buildUnauthorizedError(primaryMethod, url, res);
     }
-    if (putRes.ok) {
+    if (res.ok) {
       return;
     }
-    if (putRes.status === 400) {
-      const post = buildPostUploadRequest(this.backend, body, contentType, normalized);
-      const postRes = await this.fetch(url, {
-        method: 'POST',
-        headers: { ...this.authHeader, ...post.headers },
-        body: post.body,
-      });
-      if (postRes.status === 401) {
-        throw await buildUnauthorizedError('POST', url, postRes);
+    if (res.status === 400) {
+      const retry = await secondary();
+      if (retry.status === 401) {
+        throw await buildUnauthorizedError(secondaryMethod, url, retry);
       }
-      if (postRes.ok) {
+      if (retry.ok) {
         return;
       }
-      throw await buildHttpError('POST', url, postRes, `Upload failed for ${normalized}`);
+      throw await buildHttpError(secondaryMethod, url, retry, `Upload failed for ${normalized}`);
     }
-    throw await buildHttpError('PUT', url, putRes, `Upload failed for ${normalized}`);
+    throw await buildHttpError(primaryMethod, url, res, `Upload failed for ${normalized}`);
   }
 
   /**

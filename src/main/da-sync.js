@@ -18,8 +18,12 @@ import {
 import { toDaPath } from './aem-page-url.js';
 import { prettyPrintHtml } from './pretty-print.js';
 import { myersDiff, buildHunks } from './diff.js';
-import { contentTypeForUpload } from './content-api-shared.js';
+import { contentTypeForUpload, API_BACKEND_AEM_API } from './content-api-shared.js';
 import { applyExcludeGlobs } from './glob-exclude.js';
+import { htmlNeedsMediaInterning } from './media-references.js';
+import {
+  isTransformableHtml, toAbsoluteMedia, toRelativeMedia,
+} from './media-path-transform.js';
 
 const TEXT_EXTENSIONS = new Set([
   'html', 'htm', 'json', 'css', 'js', 'mjs', 'xml', 'txt', 'md',
@@ -851,7 +855,7 @@ export async function collectFolder(
 /**
  * Downloads and writes a single file to both working and .aem paths.
  */
-async function syncOneFile(client, org, repo, destRoot, file) {
+async function syncOneFile(client, org, repo, destRoot, file, mediaOrigin) {
   const result = await client.downloadRaw(org, repo, file.daPath);
   if (!result) {
     return null;
@@ -860,9 +864,21 @@ async function syncOneFile(client, org, repo, destRoot, file) {
   const { workingPath, originalPath } = syncPaths(destRoot, org, repo, file.daPath);
   const buf = Buffer.from(result.buffer);
 
+  // The `.aem` original keeps the server's pristine bytes (relative ./media
+  // refs) for diffing and upload; the editable working copy gets ./media
+  // rewritten to absolute origin URLs so images resolve when opened locally.
+  let workingBuf = buf;
+  if (mediaOrigin && isTransformableHtml(file.daPath)) {
+    const html = buf.toString('utf8');
+    const transformed = toAbsoluteMedia(html, mediaOrigin, file.daPath);
+    if (transformed !== html) {
+      workingBuf = Buffer.from(transformed, 'utf8');
+    }
+  }
+
   await mkdir(dirname(workingPath), { recursive: true });
   await mkdir(dirname(originalPath), { recursive: true });
-  await writeFile(workingPath, buf);
+  await writeFile(workingPath, workingBuf);
   await writeFile(originalPath, buf);
 
   if (file.lastModified) {
@@ -897,7 +913,7 @@ async function syncOneFile(client, org, repo, destRoot, file) {
  */
 export async function runSync({
   client, org, repo, items, destRoot, includeBinaries,
-  excludeGlobs, skipPaths, onProgress, signal, precollectedFiles,
+  excludeGlobs, skipPaths, onProgress, signal, precollectedFiles, mediaOrigin,
 }) {
   onProgress({ phase: 'listing', completed: 0, total: 0 });
 
@@ -989,7 +1005,7 @@ export async function runSync({
 
     const batch = filesToSync.slice(i, i + CONCURRENCY);
     const results = await Promise.all( // eslint-disable-line no-await-in-loop
-      batch.map((file) => syncOneFile(client, org, repo, destRoot, file)),
+      batch.map((file) => syncOneFile(client, org, repo, destRoot, file, mediaOrigin)),
     );
 
     for (const entry of results) {
@@ -1047,7 +1063,7 @@ export async function runSync({
  * }} options
  */
 export async function runPull({
-  client, org, repo, destRoot, files, deletions = [], onProgress, signal,
+  client, org, repo, destRoot, files, deletions = [], onProgress, signal, mediaOrigin,
 }) {
   const total = files.length + deletions.length;
   onProgress({
@@ -1074,7 +1090,7 @@ export async function runPull({
 
     const batch = files.slice(i, i + CONCURRENCY);
     const results = await Promise.all( // eslint-disable-line no-await-in-loop
-      batch.map((file) => syncOneFile(client, org, repo, destRoot, file)),
+      batch.map((file) => syncOneFile(client, org, repo, destRoot, file, mediaOrigin)),
     );
 
     for (const entry of results) {
@@ -1171,7 +1187,19 @@ export async function checkPushStatus({ destRoot, org, repo }) {
       continue; // eslint-disable-line no-continue
     }
     const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
-    if (!origBuf || !origBuf.equals(workBuf)) {
+    if (!origBuf) {
+      modified.push(daPath);
+      continue; // eslint-disable-line no-continue
+    }
+    // The working copy stores absolute media URLs; normalize them back to the
+    // pristine ./media form before comparing so the download transform alone
+    // never counts as a local edit.
+    if (isTransformableHtml(daPath)) {
+      const normalized = toRelativeMedia(workBuf.toString('utf8'), daPath);
+      if (normalized !== origBuf.toString('utf8')) {
+        modified.push(daPath);
+      }
+    } else if (!origBuf.equals(workBuf)) {
       modified.push(daPath);
     }
   }
@@ -1365,7 +1393,7 @@ async function restoreWorkingMtime(targetPath, manifestEntry, fallbackMtimePath)
  * @returns {Promise<{ reverted: number }>}
  */
 export async function runRevert({
-  destRoot, org, repo, files, onProgress, signal,
+  destRoot, org, repo, files, onProgress, signal, mediaOrigin,
 }) {
   const manifestMap = new Map();
   try {
@@ -1398,6 +1426,15 @@ export async function runRevert({
       }
       await mkdir(dirname(workingPath), { recursive: true }); // eslint-disable-line
       await copyFile(originalPath, workingPath); // eslint-disable-line no-await-in-loop
+      // Restore the working copy to the same absolute-media form a fresh
+      // download produces, not the pristine ./media original.
+      if (mediaOrigin && isTransformableHtml(file.daPath)) {
+        const origHtml = origBuf.toString('utf8');
+        const transformed = toAbsoluteMedia(origHtml, mediaOrigin, file.daPath);
+        if (transformed !== origHtml) {
+          await writeFile(workingPath, Buffer.from(transformed, 'utf8')); // eslint-disable-line no-await-in-loop
+        }
+      }
       await restoreWorkingMtime( // eslint-disable-line no-await-in-loop
         workingPath,
         manifestMap.get(file.daPath),
@@ -1435,7 +1472,7 @@ export async function runRevert({
  */
 export async function runPush({
   client, org, repo, destRoot, filesToPush, filesToDelete,
-  onProgress, signal,
+  onProgress, signal, mediaHosts = [],
 }) {
   const total = filesToPush.length + filesToDelete.length;
   let completed = 0;
@@ -1451,12 +1488,29 @@ export async function runPush({
     const batch = filesToPush.slice(i, i + CONCURRENCY);
     await Promise.all(batch.map(async (daPath) => { // eslint-disable-line no-await-in-loop
       const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
-      const buf = await readFile(workingPath);
+      const workBuf = await readFile(workingPath);
       const mime = contentTypeForUpload(daPath);
-      await client.uploadSource(org, repo, daPath, buf, mime);
 
+      // The working copy stores absolute media URLs for local viewing; send the
+      // pristine ./media relative refs back to the source on upload.
+      const html = isTransformableHtml(daPath) ? toRelativeMedia(workBuf.toString('utf8'), daPath) : null;
+      const uploadBuf = html !== null ? Buffer.from(html, 'utf8') : workBuf;
+
+      // helix6 interns external images on POST; PUT replaces as-is. For HTML on
+      // that backend, POST when the doc references any non-media-bus image so
+      // the server pulls it in; otherwise PUT (with the 400 fallback as a net).
+      const preferPost = client.backend === API_BACKEND_AEM_API && mime === 'text/html'
+        ? htmlNeedsMediaInterning(html ?? '', mediaHosts)
+        : false;
+      await client.uploadSource(org, repo, daPath, uploadBuf, mime, { preferPost });
+
+      // The new pristine original is exactly what the server now has.
       await mkdir(dirname(originalPath), { recursive: true });
-      await copyFile(workingPath, originalPath);
+      if (html !== null) {
+        await writeFile(originalPath, uploadBuf);
+      } else {
+        await copyFile(workingPath, originalPath);
+      }
     }));
     completed += batch.length;
     const last = batch[batch.length - 1];
@@ -1598,7 +1652,13 @@ export async function computePushDiffs({
     const origRaw = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
     const workRaw = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
     const origText = prettify(origRaw ? origRaw.toString('utf8') : '', daPath);
-    const workText = prettify(workRaw ? workRaw.toString('utf8') : '', daPath);
+    const workSource = workRaw ? workRaw.toString('utf8') : '';
+    // Compare against the pristine ./media form so the download's absolute-media
+    // rewrite doesn't appear as an edit in the review diff.
+    const normalizedWork = isTransformableHtml(daPath)
+      ? toRelativeMedia(workSource, daPath)
+      : workSource;
+    const workText = prettify(normalizedWork, daPath);
     const oldLines = origText.split('\n');
     const newLines = workText.split('\n');
     const edits = myersDiff(oldLines, newLines);

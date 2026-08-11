@@ -53,6 +53,8 @@ import {
 } from './site-store.js';
 import { loadSyncFolder, saveSyncFolder } from './sync-folder-store.js';
 import { formatContentForDisplay } from './content-format.js';
+import { deriveSiteHosts } from './media-references.js';
+import { mediaOriginFor, toRelativeMedia } from './media-path-transform.js';
 import { parseDocumentHtml } from './document-view-html.js';
 import { diffDocumentHtml } from './document-view-diff.js';
 import {
@@ -665,7 +667,12 @@ ipcMain.handle('document:diff', async (_event, { siteId, destFolder, daPath }) =
     return null;
   }
 
-  const diff = diffDocumentHtml(original ?? '', working ?? '');
+  // The working copy stores absolute media URLs; compare against the pristine
+  // ./media form so the download transform alone doesn't read as a change.
+  const workingForDiff = working !== null && /\.html?$/i.test(daPath)
+    ? toRelativeMedia(working, daPath)
+    : working;
+  const diff = diffDocumentHtml(original ?? '', workingForDiff ?? '');
   let status = 'modified';
   if (!diff.changed) {
     status = 'unchanged';
@@ -902,6 +909,7 @@ ipcMain.handle('sync:run', async (event, {
       excludeGlobs,
       precollectedFiles,
       skipPaths: skip,
+      mediaOrigin: mediaOriginFor(site.previewUrl),
       signal,
       onProgress: (data) => {
         if (!event.sender.isDestroyed()) {
@@ -1002,6 +1010,7 @@ ipcMain.handle('pull:run', async (event, {
       destRoot: destFolder,
       files,
       deletions,
+      mediaOrigin: mediaOriginFor(site.previewUrl),
       signal,
       onProgress: (data) => {
         if (!event.sender.isDestroyed()) {
@@ -1066,6 +1075,7 @@ ipcMain.handle('revert:run', async (event, {
       repo: site.repo,
       destRoot: destFolder,
       files,
+      mediaOrigin: mediaOriginFor(site.previewUrl),
       signal,
       onProgress: (data) => {
         if (!event.sender.isDestroyed()) {
@@ -1111,6 +1121,7 @@ ipcMain.handle('push:run', async (event, {
       destRoot: destFolder,
       filesToPush,
       filesToDelete,
+      mediaHosts: deriveSiteHosts(site.previewUrl),
       signal,
       onProgress: (data) => {
         if (!event.sender.isDestroyed()) {

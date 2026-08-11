@@ -187,6 +187,37 @@ test('uploadSource uses multipart POST for da.live on PUT 400', async () => {
   await client.uploadSource('org', 'site', '/test.html', Buffer.from('<p>hi</p>'), 'text/html');
 });
 
+test('uploadSource with preferPost posts first (interning path), no PUT', async () => {
+  const methods = [];
+  const fetchImpl = async (_url, init) => {
+    methods.push(init.method);
+    return new Response('', { status: 201 });
+  };
+  const client = new ContentApiClient('token', API_BACKEND_AEM_API, fetchImpl);
+  await client.uploadSource(
+    'org',
+    'site',
+    '/page.html',
+    Buffer.from('<img src="https://cdn.example.com/x.png">'),
+    'text/html',
+    { preferPost: true },
+  );
+  assert.deepEqual(methods, ['POST']);
+});
+
+test('uploadSource with preferPost falls back to PUT on a 400 (safety net)', async () => {
+  const methods = [];
+  const fetchImpl = async (_url, init) => {
+    methods.push(init.method);
+    return new Response('', { status: init.method === 'POST' ? 400 : 200 });
+  };
+  const client = new ContentApiClient('token', API_BACKEND_AEM_API, fetchImpl);
+  await client.uploadSource('org', 'site', '/page.html', Buffer.from('x'), 'text/html', {
+    preferPost: true,
+  });
+  assert.deepEqual(methods, ['POST', 'PUT']);
+});
+
 test('helix6 client retries on 429 then lists successfully', async () => {
   let calls = 0;
   const fetchImpl = async () => {
