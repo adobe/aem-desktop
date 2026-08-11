@@ -54,7 +54,7 @@ test('isOnPath matches ignoring trailing slashes', () => {
   assert.equal(isOnPath('/opt/bin', undefined), false);
 });
 
-test('installCli writes an executable POSIX launcher and reports PATH status', async () => {
+test('installCli falls back to ~/.local/bin when the system dir is not writable', async () => {
   const home = mkdtempSync(join(tmpdir(), 'cli-install-'));
   try {
     const result = await installCli({
@@ -64,6 +64,9 @@ test('installCli writes an executable POSIX launcher and reports PATH status', a
       platform: 'linux',
       home,
       pathEnv: `/usr/bin:${join(home, '.local', 'bin')}`,
+      // Point the "system" dir at a path that does not exist so the check fails
+      // regardless of whether the CI runner can write to /usr/local/bin.
+      systemBinDir: join(home, 'no-such-system-bin'),
     });
     assert.equal(result.path, join(home, '.local', 'bin', 'content'));
     assert.equal(result.onPath, true);
@@ -73,6 +76,27 @@ test('installCli writes an executable POSIX launcher and reports PATH status', a
     assert.equal(perms, '755', 'launcher is rwxr-xr-x');
   } finally {
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('installCli prefers the system bin dir when it is writable', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-install-sys-'));
+  const systemBinDir = mkdtempSync(join(tmpdir(), 'cli-install-usrbin-'));
+  try {
+    const result = await installCli({
+      execPath: '/opt/electron',
+      cliEntry: '/opt/app/src/cli/content.js',
+      userData: '/data',
+      platform: 'linux',
+      home,
+      pathEnv: systemBinDir,
+      systemBinDir,
+    });
+    assert.equal(result.path, join(systemBinDir, 'content'));
+    assert.equal(result.onPath, true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(systemBinDir, { recursive: true, force: true });
   }
 });
 

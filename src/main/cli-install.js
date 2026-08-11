@@ -95,19 +95,19 @@ async function isWritableDir(dir) {
 }
 
 /**
- * Picks the install directory: `/usr/local/bin` when it is writable (already on
- * PATH for most shells), otherwise a user-owned `~/.local/bin` we can always
+ * Picks the install directory: the system bin dir when it is writable (already
+ * on PATH for most shells), otherwise a user-owned `~/.local/bin` we can always
  * create. Windows uses a per-user programs dir.
  *
- * @param {{ platform: string, home: string }} ctx
+ * @param {{ platform: string, home: string, systemBinDir: string }} ctx
  * @returns {Promise<string>}
  */
-async function chooseBinDir({ platform, home }) {
+async function chooseBinDir({ platform, home, systemBinDir }) {
   if (platform === 'win32') {
     return join(home, 'AppData', 'Local', 'AEM Desktop', 'bin');
   }
-  if (await isWritableDir('/usr/local/bin')) {
-    return '/usr/local/bin';
+  if (await isWritableDir(systemBinDir)) {
+    return systemBinDir;
   }
   return join(home, '.local', 'bin');
 }
@@ -123,6 +123,7 @@ async function chooseBinDir({ platform, home }) {
  *   platform?: string,
  *   home?: string,
  *   pathEnv?: string,
+ *   systemBinDir?: string,
  * }} options
  * @returns {Promise<{ path: string, dir: string, onPath: boolean }>}
  */
@@ -133,8 +134,9 @@ export async function installCli({
   platform = process.platform,
   home = homedir(),
   pathEnv = process.env.PATH,
+  systemBinDir = '/usr/local/bin',
 }) {
-  const dir = await chooseBinDir({ platform, home });
+  const dir = await chooseBinDir({ platform, home, systemBinDir });
   await mkdir(dir, { recursive: true });
 
   if (platform === 'win32') {
