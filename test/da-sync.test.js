@@ -19,7 +19,7 @@ import {
 import {
   isBinaryExtension, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
-  evaluatePullStatus, runPull,
+  evaluatePullStatus, runPull, runSync, runPush, checkPushStatus,
   hasLocalContent, localContentSummary, deleteLocalContent,
   pruneSelectionForListing, computeSyncSummary, readCachedSyncSummary, statusCachePath,
 } from '../src/main/da-sync.js';
@@ -658,6 +658,75 @@ test('readCachedSyncSummary prefers the cache, else falls back to the manifest',
     }));
     cached = await readCachedSyncSummary({ destRoot: dest, org: 'o', repo: 'r' });
     assert.equal(cached.modifiedCount, 4);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('media transform round-trips: download rewrites working, push sends ./media back', async () => {
+  const dest = join(tmpdir(), `aem-media-roundtrip-${Date.now()}`);
+  const origin = 'https://main--r--o.aem.page';
+  const daPath = '/docs/x.html';
+  const remoteHtml = '<img src="./media_abc1234567.png#width=10">';
+  const uploads = [];
+  const client = {
+    backend: 'da.live',
+    downloadRaw: async () => ({ buffer: Buffer.from(remoteHtml, 'utf8'), contentType: 'text/html' }),
+    uploadSource: async (_org, _repo, p, buf) => { uploads.push({ p, body: buf.toString('utf8') }); },
+  };
+  const { workingPath, originalPath } = syncPaths(dest, 'o', 'r', daPath);
+
+  try {
+    // Download: working gets absolute media, .aem original stays pristine.
+    await runSync({
+      client,
+      org: 'o',
+      repo: 'r',
+      items: [{
+        daPath, isFolder: false, ext: 'html', lastModified: '2026-01-01T00:00:00Z',
+      }],
+      destRoot: dest,
+      includeBinaries: true,
+      mediaOrigin: origin,
+      onProgress: () => {},
+    });
+
+    assert.equal(
+      await readFile(workingPath, 'utf8'),
+      '<img src="https://main--r--o.aem.page/docs/media_abc1234567.png#width=10">',
+      'working copy has absolute media',
+    );
+    assert.equal(await readFile(originalPath, 'utf8'), remoteHtml, '.aem original stays ./media');
+
+    // The transform alone must not read as a local edit.
+    const clean = await checkPushStatus({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(clean.modified, [], 'download transform is not a modification');
+
+    // A genuine edit (keeping the absolute media) is detected.
+    await writeFile(
+      workingPath,
+      '<img src="https://main--r--o.aem.page/docs/media_abc1234567.png#width=10"><p>edit</p>',
+    );
+    const edited = await checkPushStatus({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(edited.modified, [daPath], 'real edit is detected');
+
+    // Push uploads the pristine ./media form (not absolute) and updates .aem.
+    await runPush({
+      client,
+      org: 'o',
+      repo: 'r',
+      destRoot: dest,
+      filesToPush: [daPath],
+      filesToDelete: [],
+      onProgress: () => {},
+    });
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0].body, '<img src="./media_abc1234567.png#width=10"><p>edit</p>');
+    assert.equal(await readFile(originalPath, 'utf8'), uploads[0].body, '.aem now matches what was sent');
+
+    // After push, nothing is pending.
+    const after = await checkPushStatus({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(after.modified, []);
   } finally {
     await rm(dest, { recursive: true, force: true });
   }
