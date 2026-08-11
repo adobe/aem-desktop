@@ -1,3 +1,10 @@
+## [1.13.1](https://github.com/adobe/aem-desktop/compare/v1.13.0...v1.13.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* surface a new root favicon.ico as a pushable file ([427aef2](https://github.com/adobe/aem-desktop/commit/427aef22ccceb9acd0021f9b9ecae5be067308c6))
+
 # [1.13.0](https://github.com/adobe/aem-desktop/compare/v1.12.0...v1.13.0) (2026-08-11)
 
 
