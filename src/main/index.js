@@ -79,6 +79,7 @@ import { applyExcludeGlobs } from './glob-exclude.js';
 import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
 import { startRumProxy } from './rum-proxy.js';
 import { withRequestLogging } from './http-log.js';
+import { installCli } from './cli-install.js';
 import log from './logger.js';
 
 // Use the basic (plaintext) Chromium password store instead of the macOS
@@ -408,6 +409,20 @@ ipcMain.handle('dev:open-app-devtools', (event) => {
 
 ipcMain.handle('app:open-external', (_event, { url }) => {
   shell.openExternal(url);
+});
+
+// Install the `content` CLI launcher on the user's PATH. The launcher runs this
+// same Electron binary in Node mode against src/cli/content.js (unpacked from
+// the asar in packaged builds) and points it at our user-data dir.
+ipcMain.handle('cli:install', async () => {
+  const cliEntry = app.isPackaged
+    ? join(process.resourcesPath, 'app.asar.unpacked', 'src', 'cli', 'content.js')
+    : join(here, '..', 'cli', 'content.js');
+  return installCli({
+    execPath: process.execPath,
+    cliEntry,
+    userData: app.getPath('userData'),
+  });
 });
 
 ipcMain.handle('app:show-error-dialog', async (_event, {

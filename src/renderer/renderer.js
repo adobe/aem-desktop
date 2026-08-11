@@ -81,6 +81,7 @@ const els = {
   authStatus: document.getElementById('auth-status'),
   signInBtn: document.getElementById('sign-in-btn'),
   signOutBtn: document.getElementById('sign-out-btn'),
+  installCliBtn: document.getElementById('install-cli-btn'),
   contentToolbar: document.getElementById('content-toolbar'),
   contentSegment: document.getElementById('content-segment'),
   contentSegmentPreview: document.getElementById('content-segment-preview'),
@@ -1842,6 +1843,44 @@ async function handleSignIn() {
   }
 }
 
+async function handleInstallCli() {
+  els.installCliBtn.disabled = true;
+  const original = els.installCliBtn.textContent;
+  els.installCliBtn.textContent = 'Installing…';
+  try {
+    const result = await window.aemDesktop.installCli();
+    const lines = [
+      'Installed the "content" command to:',
+      result.path,
+      '',
+      'Try it in a terminal:',
+      '  content sites',
+    ];
+    if (!result.onPath) {
+      lines.push(
+        '',
+        `Note: ${result.dir} is not on your PATH.`,
+        'Add it to your shell profile, e.g.:',
+        `  export PATH="${result.dir}:$PATH"`,
+      );
+    }
+    await window.aemDesktop.showErrorDialog({
+      title: 'Install CLI',
+      message: 'CLI installed',
+      detail: lines.join('\n'),
+    });
+  } catch (err) {
+    await window.aemDesktop.showErrorDialog({
+      title: 'Install CLI',
+      message: 'Could not install the CLI',
+      detail: err?.message || String(err),
+    });
+  } finally {
+    els.installCliBtn.textContent = original;
+    els.installCliBtn.disabled = false;
+  }
+}
+
 let syncFolder = null;
 // siteId -> SyncSummary|null (cached local status); drives the overview status
 // line and the remove control (× to remove the connection vs. trash to delete
@@ -3381,6 +3420,7 @@ function wireUi() {
   els.addSiteForm.addEventListener('submit', handleAddSite);
   els.signInBtn.addEventListener('click', handleSignIn);
   els.signOutBtn.addEventListener('click', handleSignOut);
+  els.installCliBtn.addEventListener('click', handleInstallCli);
 
   window.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'r') {

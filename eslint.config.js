@@ -29,13 +29,13 @@ export default defineConfig([
     // Main and preload run in the Electron/Node main process. `electron` is a
     // devDependency by design (electron-builder bundles it; it must not be a
     // runtime npm dependency), so allow importing it here.
-    files: ['src/main/**/*.js', 'scripts/**/*.js'],
+    files: ['src/main/**/*.js', 'scripts/**/*.js', 'src/cli/**/*.js'],
     languageOptions: {
       globals: { ...globals.node },
     },
     rules: {
       'import/no-extraneous-dependencies': ['error', { devDependencies: true }],
-      // Main/dev scripts log to the terminal (forwarded to `npm run dev`).
+      // Main/dev scripts and the `content` CLI log to the terminal.
       'no-console': 'off',
     },
   },
