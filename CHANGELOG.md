@@ -1,3 +1,13 @@
+# [1.13.0](https://github.com/adobe/aem-desktop/compare/v1.12.0...v1.13.0) (2026-08-11)
+
+
+### Features
+
+* add a `content` CLI and an Install CLI button ([255eb82](https://github.com/adobe/aem-desktop/commit/255eb82b78d38a80c871d9e8984c9130eab650e4))
+* content-aware media handling on upload and download ([aae3e79](https://github.com/adobe/aem-desktop/commit/aae3e796305e23b13204d349111bb5413eff2e54))
+* exclude paths with glob patterns in Download dialog; fetch listing once ([d580f93](https://github.com/adobe/aem-desktop/commit/d580f93d326e186e99d91a91405ebebdd9e1d824))
+* wire exclude globs and media transforms through the CLI ([051ac0d](https://github.com/adobe/aem-desktop/commit/051ac0db9328a31eb0456c15dcb05d0f8423e81b)), closes [#23](https://github.com/adobe/aem-desktop/issues/23) [#27](https://github.com/adobe/aem-desktop/issues/27)
+
 # [1.12.0](https://github.com/adobe/aem-desktop/compare/v1.11.0...v1.12.0) (2026-08-11)
 
 
