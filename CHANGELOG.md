@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/adobe/aem-desktop/compare/v1.11.0...v1.12.0) (2026-08-11)
+
+
+### Features
+
+* build and publish a Windows installer alongside the macOS DMG ([79f5560](https://github.com/adobe/aem-desktop/commit/79f55605877f505ac4d535446757f41168909bc8))
+
 # [1.11.0](https://github.com/adobe/aem-desktop/compare/v1.10.0...v1.11.0) (2026-08-08)
 
 
