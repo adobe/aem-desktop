@@ -15,6 +15,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createWindowOptions } from './window-options.js';
 import { initAutoUpdater } from './updater.js';
@@ -62,7 +63,7 @@ import {
   PREVIEW_WEBVIEW_PARTITION,
 } from './content-da-live-auth.js';
 import { buildPreviewUrl, buildProxyPreviewUrl } from './preview-url.js';
-import { startPreviewServer } from './preview-server.js';
+import { startPreviewServer, PREVIEW_PROXY_SECRET_HEADER } from './preview-server.js';
 import { createPreviewServerRegistry } from './preview-server-registry.js';
 import { createHeadHtmlCache } from './head-html.js';
 import { createMetadataJsonCache } from './metadata-json.js';
@@ -80,6 +81,7 @@ import { runHelix6BulkWorkflow, daPathsToBulkPaths } from './helix6-bulk.js';
 import { startRumProxy } from './rum-proxy.js';
 import { withRequestLogging } from './http-log.js';
 import { installCli } from './cli-install.js';
+import { isAllowedExternalUrl } from './external-url.js';
 import log from './logger.js';
 
 // Use the basic (plaintext) Chromium password store instead of the macOS
@@ -94,6 +96,11 @@ const preloadPath = join(here, '..', 'preload', 'index.cjs');
 
 const SITES_FILENAME = 'sites.json';
 const SYNC_FOLDER_FILENAME = 'sync-folder.json';
+
+// Per-run secret the preview webview stamps on every request to the localhost
+// preview proxy; the proxy refuses requests without it, so another local
+// process can't make token-authenticated requests through it.
+const PREVIEW_PROXY_SECRET = randomUUID();
 
 let mainWindow;
 let sitesCache = [];
@@ -368,14 +375,30 @@ async function withContentClient(site, fn) {
   }
 }
 
+/**
+ * Hands a URL to the OS browser only when it is http(s); refuses (and logs)
+ * other schemes so a link or synced document can't trigger a local protocol
+ * handler such as smb:, ssh:, or a custom app scheme.
+ *
+ * @param {string} url
+ */
+function openExternalSafely(url) {
+  if (isAllowedExternalUrl(url)) {
+    shell.openExternal(url);
+    return;
+  }
+  log.scope('security').warn(`refused to open non-http(s) external URL: ${String(url).slice(0, 120)}`);
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow(createWindowOptions(preloadPath));
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
-  // Open external links in the user's browser, never in-app.
+  // Open external links in the user's browser, never in-app — but only http(s),
+  // so a link can't invoke an arbitrary local protocol handler (smb:, ssh:, …).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalSafely(url);
     return { action: 'deny' };
   });
 
@@ -408,7 +431,7 @@ ipcMain.handle('dev:open-app-devtools', (event) => {
 });
 
 ipcMain.handle('app:open-external', (_event, { url }) => {
-  shell.openExternal(url);
+  openExternalSafely(url);
 });
 
 // Install the `content` CLI launcher on the user's PATH. The launcher runs this
@@ -1291,6 +1314,7 @@ app.whenReady().then(async () => {
     resolveActiveSite: resolvePreviewSite,
     getToken: getSiteTokenFor,
     fetchFn: chromiumFetch,
+    previewSecret: PREVIEW_PROXY_SECRET,
     onAuthRequired: (site) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('preview:auth-required', {
@@ -1300,6 +1324,21 @@ app.whenReady().then(async () => {
     },
     log,
   });
+
+  // Stamp the preview secret on the webview's requests to the localhost proxy so
+  // only in-app traffic is served (see PREVIEW_PROXY_SECRET). Scoped to the
+  // preview partition and loopback host.
+  session.fromPartition(PREVIEW_WEBVIEW_PARTITION).webRequest.onBeforeSendHeaders(
+    { urls: ['http://127.0.0.1/*'] },
+    (details, callback) => {
+      callback({
+        requestHeaders: {
+          ...details.requestHeaders,
+          [PREVIEW_PROXY_SECRET_HEADER]: PREVIEW_PROXY_SECRET,
+        },
+      });
+    },
+  );
 
   await createWindow();
   initAutoUpdater({ isPackaged: app.isPackaged });

@@ -346,3 +346,32 @@ test('preview server sends Authorization token header upstream', async () => {
     await server.close();
   }
 });
+
+test('preview server requires the per-run secret header when configured', async () => {
+  const server = await startPreviewServer({
+    previewSecret: 's3cr3t',
+    getActiveSite: async () => ({
+      org: 'o',
+      repo: 'r',
+      previewUrl: 'https://main--r--o.aem.page',
+    }),
+    getSyncFolder: async () => null,
+    // Any request that passes the gate proxies upstream; return a marker.
+    fetchFn: async () => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }),
+  });
+  try {
+    const denied = await fetch(`${server.baseUrl}/page`);
+    assert.equal(denied.status, 403, 'request without the secret is refused');
+
+    const allowed = await fetch(`${server.baseUrl}/page`, {
+      headers: { 'x-aem-preview-secret': 's3cr3t' },
+    });
+    assert.equal(allowed.status, 200, 'request with the secret is served');
+    // The secret must not be forwarded upstream and CORS is scoped to the proxy.
+    const acao = allowed.headers.get('access-control-allow-origin');
+    assert.ok(acao && acao.startsWith('http://127.0.0.1:'), `scoped ACAO, got ${acao}`);
+    assert.notEqual(acao, '*');
+  } finally {
+    await server.close();
+  }
+});
