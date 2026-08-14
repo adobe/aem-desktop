@@ -332,7 +332,7 @@ function syncSummaryNodes(summary) {
     return [summaryItem('Not downloaded')];
   }
   const items = syncCountItems(summary);
-  const syncedLabel = formatRelativeTime(summary.syncedAt);
+  const syncedLabel = formatRelativeTime(summary.lastCheckedAt || summary.syncedAt);
   if (syncedLabel) {
     items.push(summaryItem(`updated ${syncedLabel}`));
   }
@@ -358,7 +358,8 @@ function buildNavRefreshButton(summary) {
   }
 
   const label = document.createElement('span');
-  const rel = summary && summary.syncedAt ? formatRelativeTime(summary.syncedAt) : '';
+  const updatedAt = summary && (summary.lastCheckedAt || summary.syncedAt);
+  const rel = updatedAt ? formatRelativeTime(updatedAt) : '';
   label.textContent = rel ? `Updated ${rel}` : 'Check for updates';
 
   btn.append(label);
@@ -382,7 +383,8 @@ function syncSummaryTitle(summary) {
   if (summary.modifiedCount) parts.push(`${summary.modifiedCount} modified`);
   if (summary.newCount) parts.push(`${summary.newCount} new`);
   if (summary.deletedCount) parts.push(`${summary.deletedCount} deleted`);
-  if (summary.syncedAt) parts.push(`last updated ${new Date(summary.syncedAt).toLocaleString()}`);
+  const updatedAt = summary.lastCheckedAt || summary.syncedAt;
+  if (updatedAt) parts.push(`last updated ${new Date(updatedAt).toLocaleString()}`);
   return parts.join(' · ');
 }
 
@@ -2101,6 +2103,9 @@ let pullOutdated = [];
 let pullConflicts = [];
 /** @type {Array<{ daPath: string, lastModified?: string, ext?: string, conflict: boolean }>} */
 let pullFiles = [];
+// Watermark returned by the last check; carried into runPull so the manifest's
+// lastCheckedAt only advances once changes are actually pulled.
+let pullLastCheckedAt = null;
 /** @type {Array<{ daPath: string, conflict: boolean }>} */
 let pullDeletions = [];
 let pullTotalCount = 0;
@@ -2255,8 +2260,14 @@ async function runPullCheck() {
       includeBinaries: els.pullIncludeBinaries.checked,
     });
 
+    pullLastCheckedAt = status.lastCheckedAt || null;
     els.pullOverwriteConflicts.checked = false;
     renderPullStatus(status);
+    // Requirement (2): a no-change check still bumped the stored timestamp, so
+    // refresh the header's "Updated …" label to reflect "just now".
+    if (status.totalCount === 0) {
+      renderNavStatus();
+    }
   } catch (err) {
     pullTotalCount = 0;
     els.pullSummary.textContent = err.message || 'Check failed';
@@ -2360,6 +2371,7 @@ async function startPull() {
         ext,
       })),
       deletions: deletionsToApply,
+      lastCheckedAt: pullLastCheckedAt,
     });
 
     if (result.cancelled) {

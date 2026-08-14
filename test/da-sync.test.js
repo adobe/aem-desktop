@@ -19,9 +19,10 @@ import {
 import {
   isBinaryExtension, isPushableLocalNewFile, syncPaths, manifestPath, checkSyncStatus,
   collectSyncedFoldersFromAem, collectFolder, checkLocalSyncBadges,
-  evaluatePullStatus, runPull, runSync, runPush, checkPushStatus,
+  evaluatePullStatus, runPull, runSync, runPush, checkPushStatus, checkPullStatus,
   hasLocalContent, localContentSummary, deleteLocalContent,
   pruneSelectionForListing, computeSyncSummary, readCachedSyncSummary, statusCachePath,
+  touchPullCheckedAt,
 } from '../src/main/da-sync.js';
 
 test('isBinaryExtension returns false for text extensions', () => {
@@ -742,4 +743,98 @@ test('isPushableLocalNewFile allows html/json/ico at the root, hides other root 
   // Nested files of any extension are always pushable.
   assert.equal(isPushableLocalNewFile('/assets/favicon.ico'), true);
   assert.equal(isPushableLocalNewFile('/blog/hero.png'), true);
+});
+
+test('checkPullStatus (helix6) detects source changes via the log', async () => {
+  const dest = join(tmpdir(), `aem-logpull-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  const watermark = '2026-08-01T00:00:00.000Z';
+  try {
+    await mkdir(aemDir, { recursive: true });
+    // /index.html: tracked, working == original (clean → outdated on change).
+    await writeFile(join(workDir, 'index.html'), 'orig');
+    await writeFile(join(aemDir, 'index.html'), 'orig');
+    // /edited.html: tracked but locally modified (→ conflict on change).
+    await writeFile(join(workDir, 'edited.html'), 'LOCAL');
+    await writeFile(join(aemDir, 'edited.html'), 'orig');
+    // /gone.html: tracked, will be deleted remotely (clean → deletedRemotely).
+    await writeFile(join(workDir, 'gone.html'), 'orig');
+    await writeFile(join(aemDir, 'gone.html'), 'orig');
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      org: 'o',
+      repo: 'r',
+      syncedAt: watermark,
+      lastCheckedAt: watermark,
+      files: [
+        { daPath: '/index.html', lastModified: watermark },
+        { daPath: '/edited.html', lastModified: watermark },
+        { daPath: '/gone.html', lastModified: watermark },
+      ],
+    }));
+
+    const ts = Date.parse('2026-08-02T00:00:00.000Z');
+    const client = {
+      backend: 'api.aem.live',
+      getLog: async (_org, _repo, { to }) => ({
+        to,
+        entries: [
+          {
+            route: 'source', method: 'PUT', path: '/index.html', status: 200, timestamp: ts, ref: 'main',
+          },
+          {
+            route: 'source', method: 'POST', path: '/edited.html', status: 201, timestamp: ts, ref: 'main',
+          },
+          {
+            route: 'source', method: 'DELETE', path: '/gone.html', status: 200, timestamp: ts, ref: 'main',
+          },
+          // New file under a synced dir (root) → pulled as new.
+          {
+            route: 'source', method: 'POST', path: '/fresh.html', status: 201, timestamp: ts, ref: 'main',
+          },
+          // Noise that must be ignored:
+          {
+            route: 'preview', method: 'POST', path: '/index.html', status: 200, timestamp: ts, ref: 'main',
+          },
+          {
+            route: 'source', method: 'POST', path: '/index.html/.versions', status: 201, timestamp: ts, ref: 'main',
+          },
+        ],
+      }),
+    };
+
+    const status = await checkPullStatus({
+      client, org: 'o', repo: 'r', destRoot: dest, ref: 'main',
+    });
+
+    assert.deepEqual(status.outdated.sort(), ['/fresh.html', '/index.html']);
+    assert.deepEqual(status.conflicts, ['/edited.html']);
+    assert.deepEqual(status.deletedRemotely, ['/gone.html']);
+    assert.equal(status.totalCount, 4);
+    // Watermark advances to the check time (now), past the old watermark.
+    assert.ok(Date.parse(status.lastCheckedAt) > Date.parse(watermark));
+    assert.ok(Date.now() - Date.parse(status.lastCheckedAt) < 60_000);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
+
+test('touchPullCheckedAt stamps lastCheckedAt without pulling', async () => {
+  const dest = join(tmpdir(), `aem-touch-${Date.now()}`);
+  const aemDir = join(dest, 'o', 'r', '.aem');
+  try {
+    await mkdir(aemDir, { recursive: true });
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      org: 'o', repo: 'r', syncedAt: '2026-01-01T00:00:00.000Z', files: [],
+    }));
+    const when = '2026-08-11T12:00:00.000Z';
+    const summary = await touchPullCheckedAt({
+      destRoot: dest, org: 'o', repo: 'r', lastCheckedAt: when,
+    });
+    assert.equal(summary.lastCheckedAt, when);
+    const manifest = JSON.parse(await readFile(join(aemDir, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.lastCheckedAt, when);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
 });

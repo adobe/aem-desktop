@@ -45,6 +45,26 @@ export function buildAemApiSourceUrl(org, repo, daPath) {
 }
 
 /**
+ * Audit-log endpoint. `from`/`to` are ISO-8601 timestamps (epoch is rejected);
+ * `nextToken` continues a paginated response. Used to detect source changes
+ * since the last "check for updates".
+ *
+ * @param {string} org
+ * @param {string} repo
+ * @param {{ from?: string, to?: string, since?: string, nextToken?: string }} [params]
+ * @returns {string}
+ */
+export function buildAemApiLogUrl(org, repo, params = {}) {
+  const url = new URL(`${AEM_API_BASE}/${org}/sites/${repo}/log`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== '') {
+      url.searchParams.set(key, value);
+    }
+  }
+  return url.toString();
+}
+
+/**
  * @param {string} org
  * @param {string} repo
  * @returns {string}

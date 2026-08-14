@@ -24,6 +24,11 @@ import { htmlNeedsMediaInterning } from './media-references.js';
 import {
   isTransformableHtml, toAbsoluteMedia, toRelativeMedia,
 } from './media-path-transform.js';
+import { extractSourceChanges } from './source-log.js';
+
+// A "check for updates" older than this can't rely on the log (too many entries
+// to page through) and falls back to per-file remote metadata.
+const MAX_LOG_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TEXT_EXTENSIONS = new Set([
   'html', 'htm', 'json', 'css', 'js', 'mjs', 'xml', 'txt', 'md',
@@ -639,43 +644,167 @@ export async function evaluatePullStatus({
  *   onProgress?: (data: { checked: number, total: number }) => void,
  * }} options
  */
+/**
+ * Parent directory of a daPath ('/' for a root-level file). Used to scope
+ * newly-created remote files to directories we've already synced into.
+ *
+ * @param {string} daPath
+ * @returns {string}
+ */
+function parentDaDir(daPath) {
+  const idx = daPath.lastIndexOf('/');
+  return idx <= 0 ? '/' : daPath.slice(0, idx);
+}
+
+const EMPTY_PULL_RESULT = {
+  outdated: [], conflicts: [], deletedRemotely: [], deletedConflicts: [], files: [], deletions: [],
+};
+
+/**
+ * @param {string|null} lastCheckedAt
+ * @returns {object}
+ */
+function emptyPullStatus(lastCheckedAt = null) {
+  return {
+    ...EMPTY_PULL_RESULT,
+    outdatedCount: 0,
+    conflictCount: 0,
+    deletedRemotelyCount: 0,
+    deletedConflictsCount: 0,
+    totalCount: 0,
+    lastCheckedAt,
+  };
+}
+
+/**
+ * @param {object} result
+ * @param {string|null} lastCheckedAt
+ * @returns {object}
+ */
+function withPullCounts(result, lastCheckedAt) {
+  return {
+    ...result,
+    outdatedCount: result.outdated.length,
+    conflictCount: result.conflicts.length,
+    deletedRemotelyCount: result.deletedRemotely.length,
+    deletedConflictsCount: result.deletedConflicts.length,
+    totalCount: result.files.length + result.deletions.length,
+    lastCheckedAt,
+  };
+}
+
+/**
+ * Builds pull status from a set of source-log changes (helix6). Changed tracked
+ * files become outdated/conflict; DELETEs become deletions; source-created
+ * files under a synced directory are pulled as new (conflict if a local file
+ * already occupies the path).
+ *
+ * @param {{
+ *   destRoot: string, org: string, repo: string,
+ *   manifestFiles: Array<{ daPath: string }>,
+ *   changes: Map<string, { deleted: boolean, timestamp: number }>,
+ *   includeBinaries?: boolean,
+ * }} options
+ */
+async function evaluateLogPullStatus({
+  destRoot, org, repo, manifestFiles, changes, includeBinaries = true,
+}) {
+  const outdated = [];
+  const conflicts = [];
+  const deletedRemotely = [];
+  const deletedConflicts = [];
+  const files = [];
+  const deletions = [];
+
+  const manifestByPath = new Map(manifestFiles.map((f) => [f.daPath, f]));
+  const syncedDirs = new Set(manifestFiles.map((f) => parentDaDir(f.daPath)));
+
+  for (const [daPath, change] of changes) {
+    const inManifest = manifestByPath.has(daPath);
+    const ext = extname(daPath).slice(1);
+    const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
+
+    if (change.deleted) {
+      if (!inManifest) {
+        continue; // eslint-disable-line no-continue
+      }
+      const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+      const workBuf = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
+      const localModified = Boolean(origBuf && workBuf && !origBuf.equals(workBuf));
+      deletions.push({ daPath, conflict: localModified });
+      (localModified ? deletedConflicts : deletedRemotely).push(daPath);
+      continue; // eslint-disable-line no-continue
+    }
+
+    if (!includeBinaries && isBinaryExtension(ext)) {
+      continue; // eslint-disable-line no-continue
+    }
+
+    const lastModified = new Date(change.timestamp).toISOString();
+
+    if (inManifest) {
+      const origBuf = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
+      const workBuf = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
+      const localModified = Boolean(origBuf && workBuf && !origBuf.equals(workBuf));
+      files.push({
+        daPath, lastModified, ext, conflict: localModified,
+      });
+      (localModified ? conflicts : outdated).push(daPath);
+    } else {
+      // Newly-created remote file: only pull it if it lands in a directory we
+      // already sync. A local file already at that path is a conflict.
+      if (!syncedDirs.has(parentDaDir(daPath))) {
+        continue; // eslint-disable-line no-continue
+      }
+      const workBuf = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
+      const localConflict = Boolean(workBuf);
+      files.push({
+        daPath, lastModified, ext, conflict: localConflict,
+      });
+      (localConflict ? conflicts : outdated).push(daPath);
+    }
+  }
+
+  return {
+    outdated, conflicts, deletedRemotely, deletedConflicts, files, deletions,
+  };
+}
+
 export async function checkPullStatus({
-  client, org, repo, destRoot, includeBinaries = true, signal, onProgress,
+  client, org, repo, destRoot, includeBinaries = true, signal, onProgress, ref,
 }) {
   let manifest;
   try {
     manifest = JSON.parse(await readFile(manifestPath(destRoot, org, repo), 'utf8'));
   } catch {
-    return {
-      outdated: [],
-      conflicts: [],
-      deletedRemotely: [],
-      deletedConflicts: [],
-      deletions: [],
-      outdatedCount: 0,
-      conflictCount: 0,
-      deletedRemotelyCount: 0,
-      deletedConflictsCount: 0,
-      totalCount: 0,
-      files: [],
-    };
+    return emptyPullStatus(null);
   }
 
   const manifestFiles = manifest.files || [];
   if (manifestFiles.length === 0) {
-    return {
-      outdated: [],
-      conflicts: [],
-      deletedRemotely: [],
-      deletedConflicts: [],
-      deletions: [],
-      outdatedCount: 0,
-      conflictCount: 0,
-      deletedRemotelyCount: 0,
-      deletedConflictsCount: 0,
-      totalCount: 0,
-      files: [],
-    };
+    return emptyPullStatus(null);
+  }
+
+  const now = new Date().toISOString();
+  const watermark = manifest.lastCheckedAt || manifest.syncedAt || null;
+  const withinLogWindow = watermark
+    && (Date.now() - Date.parse(watermark)) <= MAX_LOG_LOOKBACK_MS;
+
+  // helix6: detect changes cheaply via the source audit log instead of a
+  // per-file metadata sweep. Falls back to per-file when there's no usable
+  // watermark or the gap is too large to page through.
+  if (client.backend === API_BACKEND_AEM_API && withinLogWindow) {
+    onProgress?.({ checked: 0, total: manifestFiles.length });
+    const { entries, to } = await client.getLog(org, repo, { from: watermark, to: now });
+    if (signal?.aborted) {
+      return emptyPullStatus(null);
+    }
+    const changes = extractSourceChanges(entries, ref);
+    const result = await evaluateLogPullStatus({
+      destRoot, org, repo, manifestFiles, changes, includeBinaries,
+    });
+    onProgress?.({ checked: manifestFiles.length, total: manifestFiles.length });
+    return withPullCounts(result, to);
   }
 
   onProgress?.({ checked: 0, total: manifestFiles.length });
@@ -684,19 +813,7 @@ export async function checkPullStatus({
   const remoteMeta = await fetchRemoteMetaForPaths(client, org, repo, daPaths, signal);
 
   if (signal?.aborted) {
-    return {
-      outdated: [],
-      conflicts: [],
-      deletedRemotely: [],
-      deletedConflicts: [],
-      deletions: [],
-      outdatedCount: 0,
-      conflictCount: 0,
-      deletedRemotelyCount: 0,
-      deletedConflictsCount: 0,
-      totalCount: 0,
-      files: [],
-    };
+    return emptyPullStatus(null);
   }
 
   const result = await evaluatePullStatus({
@@ -710,14 +827,7 @@ export async function checkPullStatus({
 
   onProgress?.({ checked: manifestFiles.length, total: manifestFiles.length });
 
-  return {
-    ...result,
-    outdatedCount: result.outdated.length,
-    conflictCount: result.conflicts.length,
-    deletedRemotelyCount: result.deletedRemotely.length,
-    deletedConflictsCount: result.deletedConflicts.length,
-    totalCount: result.files.length + result.deletions.length,
-  };
+  return withPullCounts(result, now);
 }
 
 /**
@@ -1065,6 +1175,7 @@ export async function runSync({
  */
 export async function runPull({
   client, org, repo, destRoot, files, deletions = [], onProgress, signal, mediaOrigin,
+  lastCheckedAt,
 }) {
   const total = files.length + deletions.length;
   onProgress({
@@ -1072,9 +1183,11 @@ export async function runPull({
   });
 
   const prevManifestMap = new Map();
+  let prevLastCheckedAt = null;
   try {
     const mPath = manifestPath(destRoot, org, repo);
     const prev = JSON.parse(await readFile(mPath, 'utf8'));
+    prevLastCheckedAt = prev.lastCheckedAt || null;
     for (const f of prev.files || []) {
       prevManifestMap.set(f.daPath, f);
     }
@@ -1141,6 +1254,7 @@ export async function runPull({
     org,
     repo,
     syncedAt: new Date().toISOString(),
+    lastCheckedAt: lastCheckedAt || prevLastCheckedAt || null,
     files: manifestFiles,
   };
 
@@ -1291,6 +1405,7 @@ export async function computeSyncSummary({ destRoot, org, repo }) {
   const summary = {
     fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0,
     syncedAt: manifest.syncedAt || null,
+    lastCheckedAt: manifest.lastCheckedAt || null,
     modifiedCount: modified.length,
     newCount: localNew.length,
     deletedCount: deleted.length,
@@ -1333,6 +1448,7 @@ export async function readCachedSyncSummary({ destRoot, org, repo }) {
     return {
       fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0,
       syncedAt: manifest.syncedAt || null,
+      lastCheckedAt: manifest.lastCheckedAt || null,
       modifiedCount: null,
       newCount: null,
       deletedCount: null,
@@ -1341,6 +1457,29 @@ export async function readCachedSyncSummary({ destRoot, org, repo }) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Records that a "check for updates" ran now, even when it found nothing to
+ * pull, by stamping `lastCheckedAt` on the manifest (and refreshing the cached
+ * summary that drives the header's "Updated …" label). No-op without a manifest.
+ *
+ * @param {{ destRoot: string, org: string, repo: string, lastCheckedAt: string }} options
+ * @returns {Promise<object|null>} the refreshed summary, or null
+ */
+export async function touchPullCheckedAt({
+  destRoot, org, repo, lastCheckedAt,
+}) {
+  const mPath = manifestPath(destRoot, org, repo);
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(mPath, 'utf8'));
+  } catch {
+    return null;
+  }
+  manifest.lastCheckedAt = lastCheckedAt || new Date().toISOString();
+  await writeFile(mPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  return computeSyncSummary({ destRoot, org, repo });
 }
 
 /**
