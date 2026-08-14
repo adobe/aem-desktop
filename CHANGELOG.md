@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/adobe/aem-desktop/compare/v1.13.1...v1.14.0) (2026-08-14)
+
+
+### Features
+
+* detect helix6 content updates via the source audit log ([19036c0](https://github.com/adobe/aem-desktop/commit/19036c0a3f34164fa965c067fafb1572babc33ec))
+
 ## [1.13.1](https://github.com/adobe/aem-desktop/compare/v1.13.0...v1.13.1) (2026-08-11)
 
 
