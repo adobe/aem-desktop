@@ -40,11 +40,16 @@ function previewLogger(log) {
   };
 }
 
+// Header the webview session stamps on proxy requests so only in-app traffic is
+// served (see PREVIEW_PROXY_SECRET_HEADER). Never forward it upstream.
+export const PREVIEW_PROXY_SECRET_HEADER = 'x-aem-preview-secret';
+
 const SKIP_REQUEST_HEADERS = new Set([
   'connection',
   'host',
   'proxy-connection',
   'if-modified-since',
+  PREVIEW_PROXY_SECRET_HEADER,
   // The webview sends a localhost Origin on CORS requests (e.g. module scripts).
   // EDS rejects that foreign origin with a 403, so strip it — the proxy stands in
   // for the .aem.page origin and presents requests as same-origin.
@@ -74,7 +79,6 @@ const SKIP_RESPONSE_HEADERS = new Set([
   'connection',
   'content-encoding',
   'content-length',
-  'content-security-policy',
   'keep-alive',
   'proxy-authenticate',
   'proxy-authorization',
@@ -166,7 +170,10 @@ async function proxyUpstream(req, res, upstreamUrl, proxyHost, siteToken, fetchF
 
   /** @type {Record<string, string|string[]>} */
   const respHeaders = {
-    'access-control-allow-origin': '*',
+    // Scope CORS to the proxy's own origin (the webview) rather than "*", so a
+    // page on another origin can't read authenticated preview responses.
+    'access-control-allow-origin': `http://${proxyHost}`,
+    vary: 'Origin',
   };
   upstream.headers.forEach((value, key) => {
     if (!SKIP_RESPONSE_HEADERS.has(key.toLowerCase())) {
@@ -313,6 +320,19 @@ export async function startPreviewServer(deps) {
       return;
     }
 
+    // Only serve requests coming from the in-app webview, which stamps the
+    // per-run secret via the preview session. This keeps another local user or
+    // process (curl on the guessed port) from making token-authenticated
+    // requests to the preview site through the proxy.
+    if (deps.previewSecret
+      && req.headers[PREVIEW_PROXY_SECRET_HEADER] !== deps.previewSecret) {
+      scope.warn(`403 — missing/invalid preview secret for ${req.method} ${req.url}`);
+      sendText(res, 403, 'Forbidden');
+      return;
+    }
+
+    const requestOrigin = `http://${req.headers.host || '127.0.0.1'}`;
+
     // One line per request start so hung requests are visible in the log.
     scope.info(`→ ${req.method} ${req.url} [dest: ${req.headers['sec-fetch-dest'] || '?'}]`);
 
@@ -366,7 +386,8 @@ export async function startPreviewServer(deps) {
           );
           sendResponse(res, 200, {
             'content-type': contentType,
-            'access-control-allow-origin': '*',
+            'access-control-allow-origin': requestOrigin,
+            vary: 'Origin',
           }, req.method === 'HEAD' ? '' : body);
           scope.info(`local ${localFile.relativePath} -> 200 ${pathWithQuery} (${contentType}, ${elapsed()})`);
           return;

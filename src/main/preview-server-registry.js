@@ -98,6 +98,7 @@ export function createPreviewServerRegistry(deps) {
       getToken: deps.getToken,
       onAuthRequired: deps.onAuthRequired,
       fetchFn: deps.fetchFn,
+      previewSecret: deps.previewSecret,
     });
 
     const entry = {
