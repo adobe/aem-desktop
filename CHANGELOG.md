@@ -1,3 +1,10 @@
+## [1.14.1](https://github.com/adobe/aem-desktop/compare/v1.14.0...v1.14.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* restrict openExternal to http(s) and lock down the preview proxy ([6656d91](https://github.com/adobe/aem-desktop/commit/6656d9111731d3d2a4867f27a62b950dfb76d6ea))
+
 # [1.14.0](https://github.com/adobe/aem-desktop/compare/v1.13.1...v1.14.0) (2026-08-14)
 
 
