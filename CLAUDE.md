@@ -10,14 +10,14 @@ first thing to read before making changes.
 
 An [Electron](https://www.electronjs.org/) desktop application. Today it is an
 **empty shell** (window + version readout); the point of this repository is the
-*development environment around it*: hot reload, auto-update, and a signed,
+*development environment around it*: auto-update and a signed,
 notarized release pipeline so feature work can start on a solid foundation.
 
 Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc):
 
 - **Pure ESM JavaScript** — no TypeScript, no bundler. The renderer is plain
   ESM over `file://`; the main process is ESM run directly by Electron.
-- **No Vite / webpack.** Hot reload is bundler-free (see below).
+- **No Vite / webpack.** No bundler runtime; reload the renderer with Cmd+R (see below).
 - **`node --test`** for unit and integration tests (no Mocha/Vitest).
 - **ESLint** with `@adobe/eslint-config-helix` (Apache headers enforced). No Prettier.
 - **electron-builder** for packaging/signing/notarization, **electron-updater**
@@ -27,20 +27,21 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 
 | Path                          | Purpose                                                                 |
 | ----------------------------- | ----------------------------------------------------------------------- |
-| `src/main/index.js`           | App entry: lifecycle, `BrowserWindow`, IPC, wires updater + dev reload   |
+| `src/main/index.js`           | App entry: lifecycle, `BrowserWindow`, IPC, menu, updater, UA, dev console |
 | `src/main/window-options.js`  | Pure builder of secure `BrowserWindow` options (unit tested)             |
 | `src/main/update-policy.js`   | Pure `shouldAutoUpdate()` decision (unit tested)                         |
 | `src/main/updater.js`         | electron-updater wiring against the GitHub release feed                  |
 | `src/main/logger.js`          | Shared `electron-log` logger (use instead of `console.log`)              |
 | `src/main/dev-config.js`      | Pure dev helpers: CDP port + screenshot filename (unit tested)           |
-| `src/main/dev-reload.js`      | Renderer live-reload + console forwarding (dev only)                     |
+| `src/main/dev-console.js`     | Forwards the renderer console to the dev terminal (dev only)             |
 | `src/main/cli-install.js`     | Installs the `content` CLI launcher on PATH (pure builders unit tested)  |
 | `src/main/source-log.js`      | Pure reducer of api.aem.live audit-log entries → source changes (tested) |
+| `src/main/user-agent.js`     | Pure builder of the AEM-Desktop user-agent token (unit tested)          |
 | `src/preload/index.cjs`       | Sandboxed `contextBridge` API — **the only CommonJS file** (see note)    |
 | `src/renderer/`               | `index.html` + `renderer.js` + `styles.css` — the UI shell              |
 | `src/cli/content.js`          | The `content` CLI entry (sites/download/update/upload); Node-only        |
 | `src/cli/cli-lib.js`          | Pure CLI arg parser + site selector (unit tested)                        |
-| `scripts/dev.js`              | Dev launcher: runs Electron, restarts on main/preload change            |
+| `scripts/dev.js`              | Dev launcher: runs Electron once with CDP (no auto-reload; Cmd+R instead)|
 | `test/`                       | `node --test` unit + config integration tests                           |
 | `build/`                      | electron-builder resources (entitlements; add icons here)               |
 | `electron-builder.yml`        | Packaging, signing, notarization, DMG layout, GitHub publish target     |
@@ -51,7 +52,7 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 
 ```bash
 npm install        # first-time setup (downloads the Electron binary)
-npm run dev        # run with hot reload (recommended for development)
+npm run dev        # run with CDP + renderer console forwarding (Cmd+R to reload)
 npm start          # run the app once, no watchers
 npm run lint       # ESLint (Adobe config; enforces Apache headers)
 npm run lint:fix   # autofix lint issues
@@ -108,17 +109,18 @@ Node mode.
   unit test it; the launcher-script builders in `cli-install.js` are pure and
   tested too.
 
-## Hot reload (bundler-free)
+## Reloading (manual)
 
-`npm run dev` runs `scripts/dev.js`, which splits reload by process:
+There is **no file-watch auto-reload** — it was removed because respawning
+Electron on every save stole editor focus. Instead:
 
-- **Renderer** (`src/renderer/**`): watched in-process by `dev-reload.js`, which
-  calls `webContents.reloadIgnoringCache()`. Fast, no restart.
-- **Main / preload** (`src/main/**`, `src/preload/**`): watched by `dev.js`,
-  which kills and respawns Electron, since these run out of process.
+- **Renderer changes**: press **Cmd/Ctrl+R** in the app (View → Reload, wired by
+  `installAppMenu` in `index.js`). The renderer is plain ESM over `file://`, so a
+  reload is instant.
+- **Main / preload changes**: restart `npm run dev` (these run out of process).
 
-True module-level HMR requires a bundler runtime; we deliberately use full
-reload to stay bundler-free. The renderer is plain ESM so reloads are instant.
+`scripts/dev.js` just launches Electron once (with CDP enabled); `dev-console.js`
+forwards the renderer console to the dev terminal.
 
 ### CDP remote debugging (dev only)
 
@@ -151,7 +153,7 @@ Use the shared logger (`src/main/logger.js`, backed by `electron-log`) instead o
 dir, and routes by level: **`error`/`warn` → stderr**, everything else → stdout.
 Dev scripts that run under plain Node use `electron-log/node` (see `scripts/dev.js`).
 Renderer `console.*` is forwarded through the logger in dev (see `forwardRendererConsole`
-in `dev-reload.js`) so it appears in the `npm run dev` terminal.
+in `dev-console.js`) so it appears in the `npm run dev` terminal.
 
 ## Auto-update
 

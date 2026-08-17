@@ -1306,12 +1306,14 @@ export async function checkPushStatus({ destRoot, org, repo }) {
       modified.push(daPath);
       continue; // eslint-disable-line no-continue
     }
-    // The working copy stores absolute media URLs; normalize them back to the
-    // pristine ./media form before comparing so the download transform alone
-    // never counts as a local edit.
+    // Normalize media refs to ./media on BOTH sides before comparing. The
+    // working copy carries absolute media from the download rewrite, but the
+    // server original may itself already use absolute same-origin media — so
+    // reversing only the working side flagged untouched files as modified.
     if (isTransformableHtml(daPath)) {
-      const normalized = toRelativeMedia(workBuf.toString('utf8'), daPath);
-      if (normalized !== origBuf.toString('utf8')) {
+      const normalizedWork = toRelativeMedia(workBuf.toString('utf8'), daPath);
+      const normalizedOrig = toRelativeMedia(origBuf.toString('utf8'), daPath);
+      if (normalizedWork !== normalizedOrig) {
         modified.push(daPath);
       }
     } else if (!origBuf.equals(workBuf)) {
@@ -1791,14 +1793,13 @@ export async function computePushDiffs({
     const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
     const origRaw = await safeReadFile(originalPath); // eslint-disable-line no-await-in-loop
     const workRaw = await safeReadFile(workingPath); // eslint-disable-line no-await-in-loop
-    const origText = prettify(origRaw ? origRaw.toString('utf8') : '', daPath);
+    const origSource = origRaw ? origRaw.toString('utf8') : '';
     const workSource = workRaw ? workRaw.toString('utf8') : '';
-    // Compare against the pristine ./media form so the download's absolute-media
-    // rewrite doesn't appear as an edit in the review diff.
-    const normalizedWork = isTransformableHtml(daPath)
-      ? toRelativeMedia(workSource, daPath)
-      : workSource;
-    const workText = prettify(normalizedWork, daPath);
+    // Normalize media refs to ./media on BOTH sides so neither the download's
+    // absolute-media rewrite nor already-absolute server media shows as an edit.
+    const isHtml = isTransformableHtml(daPath);
+    const origText = prettify(isHtml ? toRelativeMedia(origSource, daPath) : origSource, daPath);
+    const workText = prettify(isHtml ? toRelativeMedia(workSource, daPath) : workSource, daPath);
     const oldLines = origText.split('\n');
     const newLines = workText.split('\n');
     const edits = myersDiff(oldLines, newLines);

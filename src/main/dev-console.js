@@ -9,35 +9,9 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { watch } from 'node:fs';
 import log from './logger.js';
 
 const rendererLog = log.scope('renderer');
-
-/**
- * Live-reload the renderer when files under `rendererDir` change.
- *
- * The renderer is plain ESM served over file://, so a full reload is the
- * bundler-free equivalent of HMR. Main/preload changes are handled out of
- * process by scripts/dev.js, which restarts Electron entirely.
- *
- * @param {import('electron').BrowserWindow} window
- * @param {string} rendererDir absolute path to the renderer source directory
- * @returns {import('node:fs').FSWatcher}
- */
-export function watchRenderer(window, rendererDir) {
-  let pending;
-  const watcher = watch(rendererDir, { recursive: true }, () => {
-    clearTimeout(pending);
-    pending = setTimeout(() => {
-      if (!window.isDestroyed()) {
-        window.webContents.reloadIgnoringCache();
-      }
-    }, 100);
-  });
-  window.on('closed', () => watcher.close());
-  return watcher;
-}
 
 const NUMERIC_LEVELS = ['debug', 'info', 'warning', 'error'];
 const LEVEL_METHODS = {

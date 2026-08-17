@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
-  app, BrowserWindow, dialog, ipcMain, net, session, shell,
+  app, BrowserWindow, dialog, ipcMain, Menu, net, session, shell,
 } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -82,6 +82,7 @@ import { startRumProxy } from './rum-proxy.js';
 import { withRequestLogging } from './http-log.js';
 import { installCli } from './cli-install.js';
 import { isAllowedExternalUrl } from './external-url.js';
+import { appDesktopUserAgent } from './user-agent.js';
 import log from './logger.js';
 
 // Use the basic (plaintext) Chromium password store instead of the macOS
@@ -390,6 +391,37 @@ function openExternalSafely(url) {
   log.scope('security').warn(`refused to open non-http(s) external URL: ${String(url).slice(0, 120)}`);
 }
 
+/**
+ * Installs the application menu. Beyond the standard platform roles (so Cmd+Q,
+ * copy/paste, etc. keep working), it gives the app an explicit Reload / Force
+ * Reload under View, so Cmd/Ctrl+R reloads the renderer consistently — the
+ * manual replacement for the removed dev auto-reload.
+ */
+function installAppMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow(createWindowOptions(preloadPath));
 
@@ -402,18 +434,15 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
-  let devTools;
   if (!app.isPackaged) {
-    devTools = await import('./dev-reload.js');
-    // Attach before load so the renderer's startup logs are captured too.
-    devTools.forwardRendererConsole(mainWindow);
+    // Forward the renderer's console to the dev terminal. Attach before load so
+    // startup logs are captured too. (Renderer auto-reload was removed; use
+    // Cmd/Ctrl+R — see installAppMenu.)
+    const { forwardRendererConsole } = await import('./dev-console.js');
+    forwardRendererConsole(mainWindow);
   }
 
   await mainWindow.loadFile(join(rendererDir, 'index.html'));
-
-  if (devTools) {
-    devTools.watchRenderer(mainWindow, rendererDir);
-  }
 }
 
 ipcMain.handle('app:get-version', () => app.getVersion());
@@ -705,12 +734,11 @@ ipcMain.handle('document:diff', async (_event, { siteId, destFolder, daPath }) =
     return null;
   }
 
-  // The working copy stores absolute media URLs; compare against the pristine
-  // ./media form so the download transform alone doesn't read as a change.
-  const workingForDiff = working !== null && /\.html?$/i.test(daPath)
-    ? toRelativeMedia(working, daPath)
-    : working;
-  const diff = diffDocumentHtml(original ?? '', workingForDiff ?? '');
+  // Normalize media refs to ./media on BOTH sides so neither the download's
+  // absolute-media rewrite nor already-absolute server media reads as a change.
+  const isHtml = /\.html?$/i.test(daPath);
+  const normalize = (html) => (isHtml && html !== null ? toRelativeMedia(html, daPath) : html);
+  const diff = diffDocumentHtml(normalize(original) ?? '', normalize(working) ?? '');
   let status = 'modified';
   if (!diff.changed) {
     status = 'unchanged';
@@ -1300,6 +1328,15 @@ ipcMain.handle('dev:capture-screenshot', async (event) => {
 });
 
 app.whenReady().then(async () => {
+  // Identify AEM Desktop + version on all outbound traffic (net.fetch, windows,
+  // and webviews). userAgentFallback is the global default used when a session
+  // or webContents doesn't set its own — which nothing here does. Set before any
+  // request or window is created.
+  app.userAgentFallback = appDesktopUserAgent(app.userAgentFallback, app.getVersion());
+
+  // Application menu owns Cmd/Ctrl+R (reload) consistently across the app.
+  installAppMenu();
+
   contentDaLiveAuth = initContentDaLiveAuth(tokenPath(), session);
 
   // RUM-only localhost proxy (Node https → rum.hlx.page). Preview, DA, and IMS
