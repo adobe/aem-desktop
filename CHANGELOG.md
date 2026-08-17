@@ -1,3 +1,10 @@
+## [1.14.2](https://github.com/adobe/aem-desktop/compare/v1.14.1...v1.14.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* phantom diffs, remove dev auto-reload for Cmd+R, add app user-agent ([fb6755e](https://github.com/adobe/aem-desktop/commit/fb6755e7d89bfe6b405aa52427b0c96d41ed58bc))
+
 ## [1.14.1](https://github.com/adobe/aem-desktop/compare/v1.14.0...v1.14.1) (2026-08-17)
 
 
