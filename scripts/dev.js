@@ -10,7 +10,6 @@
  * governing permissions and limitations under the License.
  */
 import { spawn } from 'node:child_process';
-import { watch } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -22,47 +21,24 @@ const require = createRequire(import.meta.url);
 const electronBinary = require('electron');
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-// Main + preload run out of process, so changes require a full Electron restart.
-// Renderer changes are hot-reloaded in-process by src/main/dev-reload.js.
-const watchDirs = [join(root, 'src', 'main'), join(root, 'src', 'preload')];
 
 // Launch with Chrome DevTools Protocol enabled so agents/tools can attach.
 const cdpPort = resolveCdpPort(process.env);
 const electronArgs = ['.', `--remote-debugging-port=${cdpPort}`, '--remote-allow-origins=*'];
 
-let child;
-let restarting;
+// No file watching: use Cmd/Ctrl+R in the app to reload the renderer; restart
+// this command to pick up main/preload changes. (Auto-reload was removed because
+// respawning Electron on every save stole editor focus.)
+log.info(`[dev] launching Electron (CDP http://localhost:${cdpPort}) — Cmd+R reloads; restart for main/preload changes`);
+const child = spawn(electronBinary, electronArgs, { cwd: root, stdio: 'inherit' });
 
-function start() {
-  log.info(`[dev] launching Electron (CDP http://localhost:${cdpPort}, renderer hot-reload + main restart)`);
-  child = spawn(electronBinary, electronArgs, { cwd: root, stdio: 'inherit' });
-  child.on('exit', (code) => {
-    if (!restarting && code !== null) {
-      process.exit(code);
-    }
-  });
-}
-
-function restart() {
-  clearTimeout(restarting);
-  restarting = setTimeout(() => {
-    restarting = undefined;
-    if (child) {
-      child.removeAllListeners('exit');
-      child.kill();
-    }
-    log.info('[dev] restarting Electron (main/preload changed)');
-    start();
-  }, 150);
-}
-
-for (const dir of watchDirs) {
-  watch(dir, { recursive: true }, restart);
-}
-
-process.on('SIGINT', () => {
-  child?.kill();
-  process.exit(0);
+child.on('exit', (code) => {
+  if (code !== null) {
+    process.exit(code);
+  }
 });
 
-start();
+process.on('SIGINT', () => {
+  child.kill();
+  process.exit(0);
+});

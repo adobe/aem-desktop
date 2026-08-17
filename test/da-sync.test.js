@@ -838,3 +838,31 @@ test('touchPullCheckedAt stamps lastCheckedAt without pulling', async () => {
     await rm(dest, { recursive: true, force: true });
   }
 });
+
+test('checkPushStatus does not flag HTML whose server original already uses absolute media', async () => {
+  // Regression: some sites store absolute same-origin media in the source, so
+  // reverse-normalizing only the working copy flagged untouched files forever.
+  const dest = join(tmpdir(), `aem-abs-media-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  const absolute = '<img src="https://main--r--o.aem.page/media_abc1234567.png#width=10">';
+  try {
+    await mkdir(aemDir, { recursive: true });
+    // Working == original == absolute (downloaded, never edited).
+    await writeFile(join(workDir, 'index.html'), absolute);
+    await writeFile(join(aemDir, 'index.html'), absolute);
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      org: 'o', repo: 'r', files: [{ daPath: '/index.html' }],
+    }));
+
+    const status = await checkPushStatus({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(status.modified, [], 'absolute-media original is not a modification');
+
+    // A genuine edit is still detected.
+    await writeFile(join(workDir, 'index.html'), `${absolute}<p>edit</p>`);
+    const edited = await checkPushStatus({ destRoot: dest, org: 'o', repo: 'r' });
+    assert.deepEqual(edited.modified, ['/index.html']);
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
