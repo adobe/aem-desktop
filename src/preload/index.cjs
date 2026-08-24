@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('aemDesktop', {
   isDev: () => ipcRenderer.invoke('app:is-dev'),
   openAppDevTools: () => ipcRenderer.invoke('dev:open-app-devtools'),
   installCli: () => ipcRenderer.invoke('cli:install'),
+  onWindowFocused: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('app:window-focused', handler);
+    return () => ipcRenderer.removeListener('app:window-focused', handler);
+  },
 
   listSites: () => ipcRenderer.invoke('sites:list'),
   addSite: (url, apiBackend) => ipcRenderer.invoke('sites:add', { url, apiBackend }),

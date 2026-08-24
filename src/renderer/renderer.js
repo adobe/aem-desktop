@@ -118,7 +118,6 @@ const els = {
   syncOverwriteConflicts: document.getElementById('sync-overwrite-conflicts'),
   pullModal: document.getElementById('pull-modal'),
   pullSummary: document.getElementById('pull-summary'),
-  pullFolderPath: document.getElementById('pull-folder-path'),
   pullIncludeBinaries: document.getElementById('pull-include-binaries'),
   pullEmptyNotice: document.getElementById('pull-empty-notice'),
   pullDeletedSection: document.getElementById('pull-deleted-section'),
@@ -2135,18 +2134,6 @@ function resetPullModalState() {
   pulling = false;
 }
 
-function updatePullFolderDisplay() {
-  if (syncFolder) {
-    els.pullFolderPath.textContent = syncFolder;
-    els.pullFolderPath.title = syncFolder;
-    els.pullFolderPath.classList.remove('no-folder');
-  } else {
-    els.pullFolderPath.textContent = 'No folder selected';
-    els.pullFolderPath.title = '';
-    els.pullFolderPath.classList.add('no-folder');
-  }
-}
-
 function updatePullStartEnabled() {
   if (pulling || !syncFolder || pullTotalCount === 0) {
     els.pullStart.disabled = true;
@@ -2285,7 +2272,6 @@ async function runPullCheck() {
 
 function openPullModal() {
   resetPullModalState();
-  updatePullFolderDisplay();
   show(els.pullModal);
   runPullCheck();
 }
@@ -3639,6 +3625,24 @@ async function loadSyncFolderPreference() {
   updateSyncFolderDisplay();
 }
 
+let focusRefreshTimer = null;
+
+/**
+ * On regaining app focus, refresh local status: recompute tree badges and push
+ * status (which enables "Review changes…") in the browse view, or the site
+ * summaries on the overview. Debounced since focus can fire in bursts.
+ */
+function handleWindowFocused() {
+  clearTimeout(focusRefreshTimer);
+  focusRefreshTimer = setTimeout(() => {
+    if (state.view === 'browse') {
+      autoSyncCheck();
+    } else if (state.view === 'home') {
+      refreshSiteSummaries();
+    }
+  }, 150);
+}
+
 async function init() {
   wireUi();
   state.icons = await loadIcons();
@@ -3657,6 +3661,7 @@ async function init() {
   syncReviewContentView();
   await refreshAuthStatus();
   await loadSites();
+  window.aemDesktop.onWindowFocused(handleWindowFocused);
   window.aemDesktop.onPreviewAuthRequired(handlePreviewAuthRequired);
   window.aemDesktop.onDaSessionExpired(async (info) => {
     if (info?.message) {

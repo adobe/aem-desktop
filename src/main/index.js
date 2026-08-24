@@ -427,6 +427,14 @@ async function createWindow() {
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
+  // Regaining focus (app came back to the foreground) means local files may
+  // have changed underneath us — tell the renderer to refresh status/badges.
+  mainWindow.on('focus', () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:window-focused');
+    }
+  });
+
   // Open external links in the user's browser, never in-app — but only http(s),
   // so a link can't invoke an arbitrary local protocol handler (smb:, ssh:, …).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
