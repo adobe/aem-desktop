@@ -905,3 +905,41 @@ test('checkLocalSyncBadges ignores the media rewrite (no phantom modified/confli
     await rm(dest, { recursive: true, force: true });
   }
 });
+
+test('checkLocalSyncBadges tolerates sub-second lastModified rounding', async () => {
+  const dest = join(tmpdir(), `aem-badge-lm-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  try {
+    await mkdir(aemDir, { recursive: true });
+    // Unchanged file, but listing rounds ms → whole second.
+    await writeFile(join(workDir, 'a.json'), '{"x":1}');
+    await writeFile(join(aemDir, 'a.json'), '{"x":1}');
+    // Genuinely newer on the server (days apart).
+    await writeFile(join(workDir, 'b.json'), '{"y":1}');
+    await writeFile(join(aemDir, 'b.json'), '{"y":1}');
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      org: 'o',
+      repo: 'r',
+      files: [
+        { daPath: '/a.json', lastModified: '2026-08-14T19:04:49.791Z' },
+        { daPath: '/b.json', lastModified: '2026-08-10T00:00:00.000Z' },
+      ],
+    }));
+
+    const { badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      items: [
+        { daPath: '/a.json', isFolder: false, lastModified: '2026-08-14T19:04:50.000Z' },
+        { daPath: '/b.json', isFolder: false, lastModified: '2026-08-24T17:28:45.000Z' },
+      ],
+    });
+
+    assert.equal(badges['/a.json'], 'synced', 'sub-second rounding is not outdated');
+    assert.equal(badges['/b.json'], 'outdated', 'a real multi-day change is still outdated');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
