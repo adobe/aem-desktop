@@ -1,3 +1,11 @@
+## [1.14.3](https://github.com/adobe/aem-desktop/compare/v1.14.2...v1.14.3) (2026-08-24)
+
+
+### Bug Fixes
+
+* media-normalize tree badges so absolute media isn't a phantom edit ([1bd867a](https://github.com/adobe/aem-desktop/commit/1bd867a49de0c36ea63c8204045001420f155a86))
+* tolerate sub-second lastModified rounding (no phantom "outdated") ([22c865f](https://github.com/adobe/aem-desktop/commit/22c865f6377b1aa66976d8c9e982e303b316a017))
+
 ## [1.14.2](https://github.com/adobe/aem-desktop/compare/v1.14.1...v1.14.2) (2026-08-17)
 
 
