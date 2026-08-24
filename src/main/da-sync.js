@@ -292,7 +292,17 @@ export async function checkLocalSyncBadges({
 
       const origBuf = await safeReadFile(paths.originalPath);
       const workBuf = await safeReadFile(paths.workingPath);
-      const localModified = origBuf && workBuf && !origBuf.equals(workBuf);
+      // Normalize media refs to ./media on BOTH sides before comparing, matching
+      // checkPushStatus — otherwise the download's absolute-media rewrite (or
+      // already-absolute server media) reads as a local edit here, showing a
+      // phantom "modified"/"conflict" tree badge that review-changes never has.
+      let localModified = false;
+      if (origBuf && workBuf) {
+        localModified = isTransformableHtml(item.daPath)
+          ? toRelativeMedia(workBuf.toString('utf8'), item.daPath)
+            !== toRelativeMedia(origBuf.toString('utf8'), item.daPath)
+          : !origBuf.equals(workBuf);
+      }
 
       const hasTimestamps = item.lastModified && prev.lastModified;
       const remoteChanged = hasTimestamps

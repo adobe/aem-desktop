@@ -866,3 +866,42 @@ test('checkPushStatus does not flag HTML whose server original already uses abso
     await rm(dest, { recursive: true, force: true });
   }
 });
+
+test('checkLocalSyncBadges ignores the media rewrite (no phantom modified/conflict badge)', async () => {
+  const dest = join(tmpdir(), `aem-badge-media-${Date.now()}`);
+  const workDir = join(dest, 'o', 'r');
+  const aemDir = join(workDir, '.aem');
+  const lm = '2026-01-01T00:00:00Z';
+  try {
+    await mkdir(aemDir, { recursive: true });
+    // Working has absolute media (download rewrite); .aem has pristine ./media.
+    await writeFile(join(workDir, 'a.html'), '<img src="https://main--r--o.aem.page/media_abc1234567.png">');
+    await writeFile(join(aemDir, 'a.html'), '<img src="./media_abc1234567.png">');
+    // A genuinely edited file, for contrast.
+    await writeFile(join(workDir, 'b.html'), '<p>local edit</p>');
+    await writeFile(join(aemDir, 'b.html'), '<p>orig</p>');
+    await writeFile(join(aemDir, 'manifest.json'), JSON.stringify({
+      org: 'o',
+      repo: 'r',
+      files: [
+        { daPath: '/a.html', lastModified: lm },
+        { daPath: '/b.html', lastModified: lm },
+      ],
+    }));
+
+    const { badges } = await checkLocalSyncBadges({
+      destRoot: dest,
+      org: 'o',
+      repo: 'r',
+      items: [
+        { daPath: '/a.html', isFolder: false, lastModified: lm },
+        { daPath: '/b.html', isFolder: false, lastModified: lm },
+      ],
+    });
+
+    assert.equal(badges['/a.html'], 'synced', 'media-only rewrite is not a local edit');
+    assert.equal(badges['/b.html'], 'modified', 'a real edit still shows modified');
+  } finally {
+    await rm(dest, { recursive: true, force: true });
+  }
+});
