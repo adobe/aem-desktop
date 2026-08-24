@@ -141,6 +141,36 @@ async function fileMtime(path) {
   }
 }
 
+// Listing timestamps often round to whole seconds while the manifest keeps
+// millisecond precision — both reflect the same source write, so a sub-second
+// difference is not a change. Comparing them as exact strings made files show a
+// phantom "outdated"/"new"/"conflict" after a sync even though nothing changed.
+const REMOTE_TIME_TOLERANCE_MS = 1000;
+
+/**
+ * Whether the remote lastModified indicates a real change vs the manifest's.
+ * Tolerant of sub-second precision/rounding differences between the source and
+ * listing APIs; a new remote timestamp with no prior one counts as changed.
+ *
+ * @param {string|undefined|null} prevLastModified
+ * @param {string|undefined|null} remoteLastModified
+ * @returns {boolean}
+ */
+function isRemoteChanged(prevLastModified, remoteLastModified) {
+  if (!remoteLastModified) {
+    return false;
+  }
+  if (!prevLastModified) {
+    return true;
+  }
+  const remoteMs = Date.parse(remoteLastModified);
+  const prevMs = Date.parse(prevLastModified);
+  if (Number.isNaN(remoteMs) || Number.isNaN(prevMs)) {
+    return String(remoteLastModified) !== String(prevLastModified);
+  }
+  return Math.abs(remoteMs - prevMs) > REMOTE_TIME_TOLERANCE_MS;
+}
+
 /**
  * Recursively collects all file paths under a local directory,
  * returning them as DA-style paths (e.g. /blog/post.html).
@@ -304,10 +334,7 @@ export async function checkLocalSyncBadges({
           : !origBuf.equals(workBuf);
       }
 
-      const hasTimestamps = item.lastModified && prev.lastModified;
-      const remoteChanged = hasTimestamps
-        ? String(item.lastModified) !== String(prev.lastModified)
-        : item.lastModified && !prev.lastModified;
+      const remoteChanged = isRemoteChanged(prev.lastModified, item.lastModified);
 
       if (localModified && remoteChanged) {
         badges[item.daPath] = 'conflict';
@@ -424,10 +451,7 @@ export async function checkSyncStatus({
       return;
     }
 
-    const hasTimestamps = remote.lastModified && prev.lastModified;
-    const remoteChanged = hasTimestamps
-      ? String(remote.lastModified) !== String(prev.lastModified)
-      : remote.lastModified && !prev.lastModified;
+    const remoteChanged = isRemoteChanged(prev.lastModified, remote.lastModified);
 
     const paths = syncPaths(destRoot, org, repo, remote.daPath);
     const { workingPath, originalPath } = paths;
@@ -502,19 +526,6 @@ export async function checkSyncStatus({
     localOnly,
     syncedFolders,
   };
-}
-
-/**
- * @param {string|undefined|null} prevLastModified
- * @param {string|undefined|null} remoteLastModified
- * @returns {boolean}
- */
-function isRemoteChanged(prevLastModified, remoteLastModified) {
-  const hasTimestamps = remoteLastModified && prevLastModified;
-  if (hasTimestamps) {
-    return String(remoteLastModified) !== String(prevLastModified);
-  }
-  return Boolean(remoteLastModified && !prevLastModified);
 }
 
 /**
