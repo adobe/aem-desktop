@@ -37,6 +37,7 @@ Deliberate stack choices (kept close to `@adobe/aem-cli` / helix-cli, not slicc)
 | `src/main/cli-install.js`     | Installs the `content` CLI launcher on PATH (pure builders unit tested)  |
 | `src/main/source-log.js`      | Pure reducer of api.aem.live audit-log entries → source changes (tested) |
 | `src/main/user-agent.js`     | Pure builder of the AEM-Desktop user-agent token (unit tested)          |
+| `src/main/aem-guard.js`      | Guards the `.aem` pristine store: read-only originals + README/.gitignore deterrents (tested) |
 | `src/preload/index.cjs`       | Sandboxed `contextBridge` API — **the only CommonJS file** (see note)    |
 | `src/renderer/`               | `index.html` + `renderer.js` + `styles.css` — the UI shell              |
 | `src/cli/content.js`          | The `content` CLI entry (sites/download/update/upload); Node-only        |

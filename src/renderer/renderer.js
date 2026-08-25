@@ -134,6 +134,7 @@ const els = {
   pullProgressFill: document.getElementById('pull-progress-fill'),
   pullProgressText: document.getElementById('pull-progress-text'),
   reviewView: document.getElementById('review-view'),
+  reviewSelectAll: document.getElementById('review-select-all'),
   reviewFileContainer: document.getElementById('review-file-container'),
   reviewContentToolbar: document.getElementById('review-content-toolbar'),
   reviewSegment: document.getElementById('review-segment'),
@@ -2698,6 +2699,34 @@ function paintReviewFileList() {
     handleReviewRowClick,
     toggleReviewCheck,
   );
+  updateReviewSelectAllControl();
+}
+
+/**
+ * Reflects the header "select all" checkbox against the checked files: ticked
+ * when every file is checked, indeterminate when only some are, empty when
+ * none. Disabled while there is nothing to review or a push/revert is running.
+ */
+function updateReviewSelectAllControl() {
+  const total = reviewDiffs.length;
+  const checked = reviewCheckedPaths.size;
+  const box = els.reviewSelectAll;
+  box.disabled = total === 0 || pushing || reverting;
+  box.checked = total > 0 && checked === total;
+  box.indeterminate = checked > 0 && checked < total;
+}
+
+/**
+ * Header checkbox handler: check every reviewable file or clear them all.
+ *
+ * @param {boolean} checkAll
+ */
+function setReviewCheckAll(checkAll) {
+  reviewCheckedPaths = checkAll
+    ? new Set(reviewDiffs.map((d) => d.daPath))
+    : new Set();
+  paintReviewFileList();
+  updateReviewActionButtons();
 }
 
 function showReviewDiff(daPath) {
@@ -2786,6 +2815,7 @@ function updateReviewActionButtons({ forceDisabled = false } = {}) {
   els.reviewRevert.textContent = count > 0 && !forceDisabled
     ? `Revert selected (${count})`
     : 'Revert selected';
+  updateReviewSelectAllControl();
 }
 
 /**
@@ -3002,6 +3032,7 @@ async function openPushModal() {
     () => {},
     () => {},
   );
+  updateReviewSelectAllControl();
 
   showView('review');
   trackShellPageView();
@@ -3555,6 +3586,9 @@ function wireUi() {
   els.reviewPush.addEventListener('click', startPush);
   els.reviewRevert.addEventListener('click', startRevert);
   els.reviewCancel.addEventListener('click', handleReviewCancelClick);
+  els.reviewSelectAll.addEventListener('change', () => {
+    setReviewCheckAll(els.reviewSelectAll.checked);
+  });
   els.reviewCopyPreviewUrls.addEventListener('click', copyReviewPreviewUrls);
   els.reviewCopyDeletedPages.addEventListener('click', copyReviewDeletedPages);
   els.reviewPreviewPublish.addEventListener('click', openHelix6Modal);

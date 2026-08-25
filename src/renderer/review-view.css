@@ -84,6 +84,20 @@
   cursor: pointer;
 }
 
+.review-select-all-checkbox {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--s2-blue-900);
+  cursor: pointer;
+}
+
+.review-select-all-checkbox:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .review-file-list > .review-file-row:last-child {
   box-shadow: none;
 }
