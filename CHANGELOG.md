@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/adobe/aem-desktop/compare/v1.14.3...v1.15.0) (2026-08-25)
+
+
+### Features
+
+* refresh local status/badges when the app regains focus ([17bf88f](https://github.com/adobe/aem-desktop/commit/17bf88f4d24f3dc5203a2121eb8084fc50030ee4))
+
 ## [1.14.3](https://github.com/adobe/aem-desktop/compare/v1.14.2...v1.14.3) (2026-08-24)
 
 
