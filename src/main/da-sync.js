@@ -15,6 +15,9 @@ import {
 import {
   join, dirname, relative, extname,
 } from 'node:path';
+import {
+  makeReadOnly, makeWritable, restoreTreeWritable, writeAemGuardFiles,
+} from './aem-guard.js';
 import { toDaPath } from './aem-page-url.js';
 import { prettyPrintHtml } from './pretty-print.js';
 import { myersDiff, buildHunks } from './diff.js';
@@ -1011,6 +1014,9 @@ async function syncOneFile(client, org, repo, destRoot, file, mediaOrigin) {
   await mkdir(dirname(workingPath), { recursive: true });
   await mkdir(dirname(originalPath), { recursive: true });
   await writeFile(workingPath, workingBuf);
+  // Re-syncing overwrites an existing original that we previously locked; clear
+  // the read-only bit first so the write succeeds, then re-apply it below.
+  await makeWritable(originalPath);
   await writeFile(originalPath, buf);
 
   if (file.lastModified) {
@@ -1020,6 +1026,8 @@ async function syncOneFile(client, org, repo, destRoot, file, mediaOrigin) {
       await utimes(originalPath, mtime, mtime);
     }
   }
+
+  await makeReadOnly(originalPath);
 
   return {
     daPath: file.daPath,
@@ -1172,6 +1180,7 @@ export async function runSync({
   const mPath = manifestPath(destRoot, org, repo);
   await mkdir(dirname(mPath), { recursive: true });
   await writeFile(mPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  await writeAemGuardFiles(dirname(mPath));
 
   onProgress({
     phase: 'done', completed: total, total, current: '',
@@ -1252,6 +1261,7 @@ export async function runPull({
     await Promise.all(batch.map(async (daPath) => { // eslint-disable-line no-await-in-loop
       const { workingPath, originalPath } = syncPaths(destRoot, org, repo, daPath);
       await rm(workingPath, { force: true });
+      await makeWritable(originalPath);
       await rm(originalPath, { force: true });
       prevManifestMap.delete(daPath);
     }));
@@ -1282,6 +1292,7 @@ export async function runPull({
   const mPath = manifestPath(destRoot, org, repo);
   await mkdir(dirname(mPath), { recursive: true });
   await writeFile(mPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  await writeAemGuardFiles(dirname(mPath));
 
   onProgress({
     phase: 'done', completed: total, total, current: '',
@@ -1502,6 +1513,7 @@ export async function touchPullCheckedAt({
   }
   manifest.lastCheckedAt = lastCheckedAt || new Date().toISOString();
   await writeFile(mPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  await writeAemGuardFiles(dirname(mPath));
   return computeSyncSummary({ destRoot, org, repo });
 }
 
@@ -1516,6 +1528,9 @@ export async function deleteLocalContent({ destRoot, org, repo }) {
   if (!destRoot) {
     return;
   }
+  // Our pristine originals are read-only; clear that first so the recursive
+  // delete isn't blocked (notably on Windows, where read-only can't unlink).
+  await restoreTreeWritable(join(destRoot, org, repo, '.aem'));
   await rm(syncRoot(destRoot, org, repo), { recursive: true, force: true });
 }
 
@@ -1669,11 +1684,13 @@ export async function runPush({
 
       // The new pristine original is exactly what the server now has.
       await mkdir(dirname(originalPath), { recursive: true });
+      await makeWritable(originalPath);
       if (html !== null) {
         await writeFile(originalPath, uploadBuf);
       } else {
         await copyFile(workingPath, originalPath);
       }
+      await makeReadOnly(originalPath);
     }));
     completed += batch.length;
     const last = batch[batch.length - 1];
@@ -1743,7 +1760,9 @@ export async function runPush({
     const mtime = new Date(serverModified);
     if (!Number.isNaN(mtime.getTime())) {
       await utimes(workingPath, mtime, mtime); // eslint-disable-line no-await-in-loop
+      await makeWritable(originalPath); // eslint-disable-line no-await-in-loop
       await utimes(originalPath, mtime, mtime); // eslint-disable-line no-await-in-loop
+      await makeReadOnly(originalPath); // eslint-disable-line no-await-in-loop
     }
   }
 
@@ -1755,6 +1774,7 @@ export async function runPush({
   };
   await mkdir(dirname(mPath), { recursive: true });
   await writeFile(mPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  await writeAemGuardFiles(dirname(mPath));
 
   onProgress({
     phase: 'done', completed: total, total, current: '',
