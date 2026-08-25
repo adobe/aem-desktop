@@ -1,3 +1,11 @@
+# [1.16.0](https://github.com/adobe/aem-desktop/compare/v1.15.0...v1.16.0) (2026-08-25)
+
+
+### Features
+
+* add a select/deselect-all checkbox to Review changes ([8653d99](https://github.com/adobe/aem-desktop/commit/8653d99f2973f7c83e6a9ceb1f1987abdcfc21ad))
+* guard the .aem pristine store against accidental edits ([ad94aec](https://github.com/adobe/aem-desktop/commit/ad94aec493b9eb25c94803e4c488efc1328934ad))
+
 # [1.15.0](https://github.com/adobe/aem-desktop/compare/v1.14.3...v1.15.0) (2026-08-25)
 
 
