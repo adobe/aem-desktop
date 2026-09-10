@@ -33,6 +33,7 @@
   --panel-bg: #111;
   --hover: var(--s2-gray-75);
   --rail-width: 380px;
+  --rail-resizer-width: 6px;
   --titlebar-height: 52px;
 }
 
@@ -289,7 +290,7 @@ body {
 .browse-view {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--rail-width) 1fr;
+  grid-template-columns: var(--rail-width) var(--rail-resizer-width) 1fr;
   min-height: 0;
 }
 
@@ -314,6 +315,74 @@ body {
   overflow: hidden;
   padding: 0;
   min-height: 0;
+}
+
+.rail-resizer {
+  position: relative;
+  z-index: 1;
+  width: var(--rail-resizer-width);
+  background: var(--rail-bg);
+  border-right: 1px solid var(--rail-border);
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+}
+
+.file-tree-header,
+.review-rail-header {
+  position: relative;
+  overflow: visible;
+}
+
+.rail-overflow-trigger {
+  min-width: 1.5rem;
+  padding: 0 var(--s2-spacing-75);
+}
+
+.rail-overflow-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: var(--s2-spacing-100);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2-spacing-50);
+  min-width: max-content;
+  padding: var(--s2-spacing-75);
+  border: 1px solid var(--s2-gray-300);
+  border-radius: var(--s2-corner-radius-100);
+  background: var(--s2-gray-25);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 35%);
+}
+
+.rail-overflow-menu[hidden] {
+  display: none;
+}
+
+.rail-overflow-menu .s2-btn {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.browser-section:has(.rail-overflow-menu),
+.file-tree:has(.rail-overflow-menu) {
+  overflow: visible;
+}
+
+.rail-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 -2px;
+}
+
+.rail-resizer:hover,
+.rail-resizer:focus-visible,
+.is-resizing .rail-resizer {
+  background: var(--accent);
+}
+
+.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .site-list {
