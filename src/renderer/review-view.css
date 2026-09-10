@@ -15,7 +15,7 @@
 .review-view {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--rail-width) 1fr;
+  grid-template-columns: var(--rail-width) var(--rail-resizer-width) 1fr;
   min-height: 0;
 }
 

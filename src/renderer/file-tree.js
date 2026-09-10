@@ -11,6 +11,7 @@
  */
 /* eslint-disable no-use-before-define */
 import { cloneIcon } from './icons.js';
+import { wireRailOverflow } from './rail-overflow.js';
 import { entryDisplayLabel, getIconByExtension } from './entry-utils.js';
 
 /**
@@ -156,6 +157,7 @@ function renderPanelHeader(selectionCount, options) {
 
   if (actions.childElementCount > 0) {
     header.append(actions);
+    wireRailOverflow(header, actions);
   }
 
   return header;

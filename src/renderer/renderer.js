@@ -37,6 +37,7 @@ import {
 } from './document-view.js';
 import { initDesktopRum, trackDesktopPageView } from './rum.js';
 import { formatRelativeTime } from './relative-time.js';
+import { wireRailOverflow } from './rail-overflow.js';
 
 const state = {
   view: 'home',
@@ -57,6 +58,10 @@ const state = {
     hasPullChanges: false,
   },
 };
+
+const RAIL_WIDTH_STORAGE_KEY = 'railWidth';
+const RAIL_MIN_WIDTH = 240;
+const RAIL_MAX_WIDTH = 600;
 
 const els = {
   app: document.getElementById('app'),
@@ -168,6 +173,79 @@ const els = {
 
 function activeSite() {
   return state.sites.find((site) => site.id === state.activeSiteId) ?? null;
+}
+
+function clampRailWidth(width) {
+  return Math.min(Math.max(width, RAIL_MIN_WIDTH), RAIL_MAX_WIDTH);
+}
+
+function setRailWidth(width) {
+  const railWidth = clampRailWidth(width);
+  document.documentElement.style.setProperty('--rail-width', `${railWidth}px`);
+  document.querySelectorAll('.rail-resizer').forEach((resizer) => {
+    resizer.setAttribute('aria-valuenow', String(railWidth));
+  });
+  try {
+    localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(railWidth));
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function loadRailWidth() {
+  try {
+    const savedWidth = Number(localStorage.getItem(RAIL_WIDTH_STORAGE_KEY));
+    if (Number.isFinite(savedWidth)) {
+      setRailWidth(savedWidth);
+    }
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function wireRailResizers() {
+  document.querySelectorAll('.rail-resizer').forEach((resizer) => {
+    let startX = 0;
+    let startWidth = 0;
+
+    resizer.addEventListener('pointerdown', (event) => {
+      startX = event.clientX;
+      startWidth = resizer.previousElementSibling.getBoundingClientRect().width;
+      resizer.setPointerCapture(event.pointerId);
+      document.body.classList.add('is-resizing');
+      event.preventDefault();
+    });
+
+    resizer.addEventListener('pointermove', (event) => {
+      if (resizer.hasPointerCapture(event.pointerId)) {
+        setRailWidth(startWidth + event.clientX - startX);
+      }
+    });
+
+    const stopResizing = (event) => {
+      if (resizer.hasPointerCapture(event.pointerId)) {
+        resizer.releasePointerCapture(event.pointerId);
+        document.body.classList.remove('is-resizing');
+      }
+    };
+    resizer.addEventListener('pointerup', stopResizing);
+    resizer.addEventListener('pointercancel', stopResizing);
+
+    resizer.addEventListener('keydown', (event) => {
+      const currentWidth = parseFloat(getComputedStyle(document.documentElement)
+        .getPropertyValue('--rail-width'));
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        setRailWidth(currentWidth + (event.key === 'ArrowRight' ? 16 : -16));
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        setRailWidth(RAIL_MIN_WIDTH);
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        setRailWidth(RAIL_MAX_WIDTH);
+      }
+    });
+  });
 }
 
 function isHelix6Site() {
@@ -3434,6 +3512,9 @@ function handleHelix6CancelClick() {
 }
 
 function wireUi() {
+  loadRailWidth();
+  wireRailResizers();
+  wireRailOverflow(els.reviewView.querySelector('.review-rail-header'), els.reviewView.querySelector('.rail-header-actions'));
   els.navHome.addEventListener('click', goHome);
 
   els.addSiteToggle.addEventListener('click', () => {
