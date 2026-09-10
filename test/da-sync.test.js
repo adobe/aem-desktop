@@ -749,7 +749,7 @@ test('checkPullStatus (helix6) detects source changes via the log', async () => 
   const dest = join(tmpdir(), `aem-logpull-${Date.now()}`);
   const workDir = join(dest, 'o', 'r');
   const aemDir = join(workDir, '.aem');
-  const watermark = '2026-08-01T00:00:00.000Z';
+  const watermark = new Date(Date.now() - 60_000).toISOString();
   try {
     await mkdir(aemDir, { recursive: true });
     // /index.html: tracked, working == original (clean → outdated on change).
