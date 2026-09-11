@@ -80,11 +80,54 @@ jobs:
 
       - run: npm ci
 
+      # Import the Developer ID certificate ourselves instead of handing
+      # electron-builder CSC_LINK. Its own CSC_LINK path builds a temporary
+      # keychain and then calls `security set-key-partition-list` with the .p12
+      # import password instead of the keychain password it generated
+      # (electron-userland/electron-builder#10066), which the macos-26 runner
+      # image has rejected since 20260907:
+      #   security: SecKeychainUnlock: The user name or passphrase you entered
+      #   is not correct.
+      # Doing it here keeps the two passwords straight: the .p12 password is
+      # only ever passed to `security import`, and the partition list is
+      # unlocked with the keychain password.
+      - name: Import signing certificate into a dedicated keychain
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # No auto-lock: notarization can outlast the default 5-minute timeout.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$CERT_PATH"
+
+          # -k takes the KEYCHAIN password. This is the exact call that fails
+          # inside electron-builder; here it gets the right secret.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+
+          # Put it on the search list so codesign/notarytool can see it.
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          echo "CSC_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
       - name: electron-builder (mac, signed + notarized)
         env:
-          # Developer ID Application certificate, base64-encoded .p12 + password.
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # No CSC_LINK: the certificate is already in CSC_KEYCHAIN (exported to
+          # GITHUB_ENV by the step above), and electron-builder auto-discovers
+          # the Developer ID Application identity from it.
           # Notarization credentials (Apple ID app-specific password flow).
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -92,6 +135,10 @@ jobs:
         run: >-
           npx electron-builder --mac --publish never
           -c.extraMetadata.version=${{ needs.version.outputs.version }}
+
+      - name: Delete the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6
