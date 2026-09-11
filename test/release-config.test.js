@@ -58,3 +58,18 @@ test('package.json exposes the Electron main entry and updater dependency', () =
   assert.equal(pkg.main, 'src/main/index.js');
   assert.ok(pkg.dependencies['electron-updater'], 'electron-updater must be a runtime dependency');
 });
+
+test('electron-builder is pinned to a version with the macOS keychain signing fix', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const version = pkg.devDependencies['electron-builder'];
+  assert.ok(version, 'electron-builder must be a devDependency');
+  // 26.16.1 backported the fix for `security set-key-partition-list` being
+  // invoked with the .p12 import password instead of the generated keychain
+  // password, which breaks CSC_LINK-based signing on the macOS runners
+  // (electron-userland/electron-builder#10066). npm's `latest` dist-tag still
+  // points at the older 26.15.3, so "upgrade to latest" is a downgrade here and
+  // the floor has to be asserted explicitly.
+  const [major, minor, patch] = version.split('.').map(Number);
+  const ok = major > 26 || (major === 26 && (minor > 16 || (minor === 16 && patch >= 1)));
+  assert.ok(ok, `electron-builder must be >= 26.16.1, got ${version}`);
+});
