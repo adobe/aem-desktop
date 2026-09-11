@@ -64,7 +64,14 @@ jobs:
     name: Build macOS (signed + notarized)
     needs: version
     if: needs.version.outputs.publish == 'true'
-    runs-on: macos-latest
+    # Pinned, NOT macos-latest. Signing broke when `macos-latest` rolled from
+    # macos-26 image 20260819 to 20260907: the newer image actually verifies the
+    # password passed to `security set-key-partition-list`, and electron-builder
+    # 25.x passes the .p12 import password there instead of the keychain
+    # password it generated (electron-userland/electron-builder#10066). macOS 15
+    # is still the lenient behaviour, so the existing toolchain keeps working.
+    # Also arm64, which is what mac.target builds for.
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
