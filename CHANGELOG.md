@@ -1,3 +1,15 @@
+# [1.17.0](https://github.com/adobe/aem-desktop/compare/v1.16.0...v1.17.0) (2026-09-11)
+
+
+### Bug Fixes
+
+* **build:** upgrade electron-builder to 26.16.1 to unbreak macOS signing ([a999efe](https://github.com/adobe/aem-desktop/commit/a999efe3fa84ad113900dc0fa0e68740cdd13909)), closes [electron-userland/electron-builder#10066](https://github.com/electron-userland/electron-builder/issues/10066)
+
+
+### Features
+
+* add resizable rail overflow actions ([4df123c](https://github.com/adobe/aem-desktop/commit/4df123c8d97b4b1b868e196f06f5d659b7fcdf45))
+
 # [1.16.0](https://github.com/adobe/aem-desktop/compare/v1.15.0...v1.16.0) (2026-08-25)
 
 
