@@ -47,7 +47,7 @@
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "10.0.1",
     "electron": "42.3.3",
-    "electron-builder": "25.1.8",
+    "electron-builder": "26.16.1",
     "eslint": "9.4.0",
     "globals": "15.15.0",
     "husky": "9.1.7",

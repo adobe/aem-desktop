@@ -211,6 +211,27 @@ Windows on a Windows runner, the workflow is **four jobs**:
 | `APPLE_TEAM_ID`                | Apple Developer Team ID                            |
 | `RELEASE_TOKEN`                | Admin-owned PAT used as `GITHUB_TOKEN` for the release (and the version-detection dry-run); bypasses the `main-protection` ruleset so the `chore(release)` commit/tag can push to `main` |
 
+### macOS signing needs electron-builder >= 26.16.1
+
+Signing on the macOS runner goes through electron-builder's `CSC_LINK` path: it
+imports the `.p12` into a throwaway keychain, then authorises `codesign` against
+it with `security set-key-partition-list`. Up to and including 26.16.0 that call
+passed the **`.p12` import password** instead of the **generated keychain
+password**, so signing dies with:
+
+```
+security: SecKeychainUnlock: The user name or passphrase you entered is not correct.
+```
+
+The bug was latent for years and only became fatal when the `macos-26` runner
+image tightened keychain unlocking (it built fine on image `20260819`, failed on
+`20260907`). The fix (electron-userland/electron-builder#10066, backported in
+#10172) shipped in **26.16.1**.
+
+> Beware: npm's `latest` dist-tag points at **26.15.3**, which is *older* than
+> the fix — `npm install electron-builder@latest` reintroduces the bug. The
+> floor is asserted by a test in `test/release-config.test.js`.
+
 Windows signing is **not configured yet** — the Windows job builds unsigned.
 To sign later, add a code-signing certificate as `WIN_CSC_LINK` /
 `WIN_CSC_KEY_PASSWORD` secrets (or wire up a cloud-HSM signer such as Azure
