@@ -10,13 +10,13 @@
  * governing permissions and limitations under the License.
  */
 import {
-  mkdir, readdir, readFile, stat, writeFile, utimes, copyFile, rm,
+  mkdir, readdir, readFile, stat, lstat, writeFile, utimes, copyFile, rm, rmdir,
 } from 'node:fs/promises';
 import {
-  join, dirname, relative, extname,
+  join, dirname, relative, extname, isAbsolute, resolve as resolvePath,
 } from 'node:path';
 import {
-  makeReadOnly, makeWritable, restoreTreeWritable, writeAemGuardFiles,
+  aemGuardFiles, makeReadOnly, makeWritable, restoreTreeWritable, writeAemGuardFiles,
 } from './aem-guard.js';
 import { toDaPath } from './aem-page-url.js';
 import { prettyPrintHtml } from './pretty-print.js';
@@ -1532,6 +1532,145 @@ export async function deleteLocalContent({ destRoot, org, repo }) {
   // delete isn't blocked (notably on Windows, where read-only can't unlink).
   await restoreTreeWritable(join(destRoot, org, repo, '.aem'));
   await rm(syncRoot(destRoot, org, repo), { recursive: true, force: true });
+}
+
+async function assertNoLocalSymlinks(base, target) {
+  let current = base;
+  for (const segment of relative(base, target).split(/[\\/]/)) {
+    current = join(current, segment);
+    try {
+      const info = await lstat(current); // eslint-disable-line no-await-in-loop
+      if (info.isSymbolicLink()) {
+        throw new Error(`Cannot disconnect through a symbolic link: ${current}`);
+      }
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return;
+      }
+      throw err;
+    }
+  }
+}
+
+async function pruneEmptyDirectories(start, root) {
+  for (let dir = start; dir !== root; dir = dirname(dir)) {
+    try {
+      await rmdir(dir); // eslint-disable-line no-await-in-loop
+    } catch (err) {
+      if (err.code === 'ENOTEMPTY' || err.code === 'EEXIST') {
+        return;
+      }
+      if (err.code !== 'ENOENT') {
+        throw err;
+      }
+    }
+  }
+}
+
+/**
+ * Forgets downloaded folders without deleting anything remotely. Removes whole
+ * working trees (including local edits/new files), originals and tracking state.
+ *
+ * @param {{ destRoot: string, org: string, repo: string, folderPaths: string[] }} options
+ * @returns {Promise<void>}
+ */
+export async function disconnectLocalFolders({
+  destRoot, org, repo, folderPaths,
+}) {
+  if (typeof destRoot !== 'string' || !isAbsolute(destRoot)
+    || ![org, repo].every((part) => typeof part === 'string' && /^[a-z0-9][a-z0-9-]*$/i.test(part))) {
+    throw new Error('A valid local folder and site are required');
+  }
+  if (!Array.isArray(folderPaths) || folderPaths.length === 0) {
+    throw new Error('Select downloaded folders to disconnect');
+  }
+  for (const path of folderPaths) {
+    if (typeof path !== 'string' || !path.startsWith('/')
+      || /[\\:\0]/.test(path)
+      || path.split('/').slice(1).some((part) => !part || /[. ]$/.test(part))
+      || path.split('/')[1].toLowerCase() === '.aem') {
+      throw new Error('Only non-root content folders can be disconnected');
+    }
+  }
+  const folders = [...new Set(folderPaths)].filter((path, _index, all) => (
+    !all.some((parent) => path.startsWith(`${parent}/`))
+  ));
+  const contains = (path) => folders.some((folder) => path.startsWith(`${folder}/`));
+  const base = resolvePath(destRoot);
+  const root = syncRoot(base, org, repo);
+  const aemRoot = join(root, '.aem');
+  const mPath = manifestPath(base, org, repo);
+  const cachePath = statusCachePath(base, org, repo);
+  const targets = folders.map((path) => syncPaths(base, org, repo, path));
+
+  await Promise.all([
+    mPath, cachePath,
+    ...targets.flatMap(({ workingPath, originalPath }) => [workingPath, originalPath]),
+  ].map((path) => assertNoLocalSymlinks(base, path)));
+
+  let manifest = null;
+  try {
+    manifest = JSON.parse(await readFile(mPath, 'utf8'));
+    if (!Array.isArray(manifest.files)
+      || manifest.files.some((file) => typeof file.daPath !== 'string')) {
+      throw new Error('Invalid download manifest');
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+  for (let i = 0; i < targets.length; i += 1) {
+    let hasOriginal = false;
+    for (const path of [targets[i].workingPath, targets[i].originalPath]) {
+      try {
+        const info = await lstat(path); // eslint-disable-line no-await-in-loop
+        if (!info.isDirectory()) {
+          throw new Error(`Not a local folder: ${path}`);
+        }
+        hasOriginal ||= path === targets[i].originalPath;
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          throw err;
+        }
+      }
+    }
+    if (!hasOriginal && !manifest?.files.some((file) => file.daPath.startsWith(`${folders[i]}/`))) {
+      throw new Error(`Folder has not been downloaded: ${folders[i]}`);
+    }
+  }
+
+  await rm(cachePath, { force: true });
+  for (const { workingPath, originalPath } of targets) {
+    for (const path of [workingPath, originalPath]) {
+      await restoreTreeWritable(path); // eslint-disable-line no-await-in-loop
+      await rm(path, { recursive: true, force: true }); // eslint-disable-line no-await-in-loop
+    }
+    await pruneEmptyDirectories(dirname(workingPath), root); // eslint-disable-line no-await-in-loop
+    // eslint-disable-next-line no-await-in-loop
+    await pruneEmptyDirectories(dirname(originalPath), aemRoot);
+  }
+
+  const remaining = manifest?.files.filter((file) => !contains(file.daPath)) || [];
+  if (remaining.length > 0) {
+    await writeFile(mPath, `${JSON.stringify({ ...manifest, files: remaining }, null, 2)}\n`, 'utf8');
+  } else {
+    await rm(mPath, { force: true });
+    const guards = aemGuardFiles().map(({ name }) => name);
+    let entries;
+    try {
+      entries = await readdir(aemRoot);
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        throw err;
+      }
+      entries = [];
+    }
+    if (entries.every((name) => guards.includes(name))) {
+      await Promise.all(guards.map((name) => rm(join(aemRoot, name), { force: true })));
+      await pruneEmptyDirectories(aemRoot, base);
+    }
+  }
 }
 
 /**
