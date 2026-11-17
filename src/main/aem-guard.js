@@ -98,7 +98,7 @@ export async function restoreTreeWritable(dir) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       await restoreTreeWritable(full);
-    } else {
+    } else if (!entry.isSymbolicLink()) {
       await makeWritable(full);
     }
   }));

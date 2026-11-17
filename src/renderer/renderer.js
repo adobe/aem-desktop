@@ -1385,6 +1385,66 @@ function findItemInCache(daPath) {
   return state.tree.cache[parentPath]?.find((entry) => entry.daPath === daPath);
 }
 
+let disconnectingFolders = false;
+
+function canDisconnectSelectedFolders() {
+  const items = getSelectedItems();
+  return Boolean(syncFolder) && !disconnectingFolders
+    && !syncing && !pulling && !pushing && !reverting
+    && items.length > 0 && items.length === state.tree.selectedPaths.size
+    && items.every((item) => item.isFolder && state.tree.syncBadges.get(item.daPath) === 'synced');
+}
+
+async function disconnectSelectedFolders() {
+  if (!canDisconnectSelectedFolders()) {
+    return;
+  }
+  const siteId = state.activeSiteId;
+  const folders = getSelectedItems().map((item) => item.daPath);
+  const isDisconnected = (path) => folders.some((folder) => (
+    path === folder || path?.startsWith(`${folder}/`)
+  ));
+  disconnectingFolders = true;
+  paintFileTree();
+  try {
+    const result = await window.aemDesktop.disconnectFolders(siteId, folders);
+    if (!result.disconnected || state.activeSiteId !== siteId) {
+      return;
+    }
+    state.tree.selectedPaths = new Set(
+      [...state.tree.selectedPaths].filter((path) => !isDisconnected(path)),
+    );
+    if (isDisconnected(state.tree.anchorPath)) {
+      state.tree.anchorPath = null;
+    }
+    if (isDisconnected(state.tree.openedDaPath)) {
+      state.tree.openedDaPath = null;
+      resetBrowseContentView();
+    }
+    state.tree.expanded = new Set(
+      [...state.tree.expanded].filter((path) => !isDisconnected(path)),
+    );
+    const expanded = [...state.tree.expanded];
+    state.tree.cache = {};
+    state.tree.syncBadges = new Map();
+    state.tree.hasPushChanges = false;
+    state.tree.hasPullChanges = false;
+    resetSyncModalState();
+    resetPullModalState();
+    await refreshSyncedFolderBadges();
+    for (const path of expanded) {
+      await loadFolder(path); // eslint-disable-line no-await-in-loop
+    }
+    checkPushStatus();
+    await Promise.all([renderNavStatus(), refreshSiteSummaries()]);
+  } catch (err) {
+    await showRequestErrorDialog('Disconnect failed', err);
+  } finally {
+    disconnectingFolders = false;
+    paintFileTree();
+  }
+}
+
 function paintFileTree() {
   const treeEl = els.fileTree.querySelector('[role="tree"]');
   const focusedPath = treeEl?.querySelector('[role="treeitem"][tabindex="0"]')?.dataset.daPath ?? null;
@@ -1401,6 +1461,8 @@ function paintFileTree() {
     onRowClick: handleRowClick,
     onRowDoubleClick: handleRowDoubleClick,
     onSyncSelected: openSyncModal,
+    onDisconnectSelected: disconnectSelectedFolders,
+    canDisconnect: canDisconnectSelectedFolders(),
     // Pull now lives in the header as the "synced …" refresh button (renderNavStatus).
     onPush: openPushModal,
     selectionCount: state.tree.selectedPaths.size,
@@ -1435,9 +1497,13 @@ async function loadFolder(daPath) {
   }
 
   state.tree.error = null;
+  const { cache } = state.tree;
 
   try {
     const items = await window.aemDesktop.listDa(state.activeSiteId, daPath);
+    if (state.tree.cache !== cache) {
+      return;
+    }
     state.tree.cache[daPath] = items;
     await refreshLocalBadgesForFolder(daPath);
   } catch (err) {
@@ -1530,12 +1596,13 @@ async function refreshSyncedFolderBadges() {
     return;
   }
   const siteId = state.activeSiteId;
+  const { syncBadges } = state.tree;
   try {
     const { badges } = await window.aemDesktop.getLocalSyncBadges({
       siteId,
       destFolder: syncFolder,
     });
-    if (state.activeSiteId !== siteId) {
+    if (state.activeSiteId !== siteId || state.tree.syncBadges !== syncBadges) {
       return;
     }
     mergeSyncBadges(badges);
@@ -1553,6 +1620,7 @@ async function refreshLocalBadgesForFolder(daPath) {
     return;
   }
   const siteId = state.activeSiteId;
+  const { syncBadges } = state.tree;
   try {
     const { badges, localFolders } = await window.aemDesktop.getLocalSyncBadges({
       siteId,
@@ -1564,7 +1632,7 @@ async function refreshLocalBadgesForFolder(daPath) {
         lastModified: item.lastModified,
       })),
     });
-    if (state.activeSiteId !== siteId) {
+    if (state.activeSiteId !== siteId || state.tree.syncBadges !== syncBadges) {
       return;
     }
     mergeSyncBadges(badges);
@@ -1581,11 +1649,12 @@ function checkPushStatus() {
     return;
   }
   const siteId = state.activeSiteId;
+  const { cache } = state.tree;
   window.aemDesktop.checkPush({
     siteId,
     destFolder: syncFolder,
   }).then((ps) => {
-    if (state.activeSiteId !== siteId) {
+    if (state.activeSiteId !== siteId || state.tree.cache !== cache) {
       return;
     }
     const hasChanges = ps.modified.length > 0
