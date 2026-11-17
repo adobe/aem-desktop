@@ -72,7 +72,7 @@ import {
   collectFolder, isBinaryExtension,
   checkPushStatus, runPush, computePushDiffs,
   checkLocalSyncBadges, checkPullStatus, runPull, runRevert,
-  localContentSummary, deleteLocalContent, disconnectLocalFolders, pruneSelectionForListing,
+  localContentSummary, deleteLocalContent, pruneSelectionForListing,
   computeSyncSummary, readCachedSyncSummary, touchPullCheckedAt,
 } from './da-sync.js';
 import { buildDeleteLocalPrompt } from './delete-local-prompt.js';
@@ -97,14 +97,6 @@ const preloadPath = join(here, '..', 'preload', 'index.cjs');
 
 const SITES_FILENAME = 'sites.json';
 const SYNC_FOLDER_FILENAME = 'sync-folder.json';
-
-let disconnectingFolders = false;
-
-function assertNotDisconnecting() {
-  if (disconnectingFolders) {
-    throw new Error('Wait for folder disconnection to finish');
-  }
-}
 
 // Per-run secret the preview webview stamps on every request to the localhost
 // preview proxy; the proxy refuses requests without it, so another local
@@ -600,7 +592,6 @@ ipcMain.handle('sites:delete-local', async (_event, { id, destFolder }) => {
     return { deleted: false };
   }
 
-  assertNotDisconnecting();
   await deleteLocalContent({ destRoot: destFolder, org: site.org, repo: site.repo });
   return { deleted: true };
 });
@@ -971,7 +962,6 @@ ipcMain.handle('sync:run', async (event, {
     throw new Error('Site not found');
   }
 
-  assertNotDisconnecting();
   syncAbortController = new AbortController();
   const { signal } = syncAbortController;
 
@@ -1050,7 +1040,6 @@ ipcMain.handle('sync:local-badges', async (_event, {
 });
 
 let pullAbortController = null;
-let pullChecksRunning = 0;
 
 ipcMain.handle('pull:check', async (event, {
   siteId, destFolder, includeBinaries,
@@ -1061,39 +1050,33 @@ ipcMain.handle('pull:check', async (event, {
     throw new Error('Site not found');
   }
 
-  assertNotDisconnecting();
-  pullChecksRunning += 1;
-  try {
-    const status = await withContentClient(site, (client) => checkPullStatus({
-      client,
+  const status = await withContentClient(site, (client) => checkPullStatus({
+    client,
+    org: site.org,
+    repo: site.repo,
+    destRoot: destFolder,
+    includeBinaries,
+    ref: site.branch,
+    onProgress: (data) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('pull:check-progress', data);
+      }
+    },
+  }));
+
+  // Requirement (2): even with nothing to pull, record that we just checked so
+  // the header's "Updated …" label resets. When there are changes, the
+  // watermark advances only once they're actually pulled (see pull:run).
+  if (status.totalCount === 0 && status.lastCheckedAt) {
+    await touchPullCheckedAt({
+      destRoot: destFolder,
       org: site.org,
       repo: site.repo,
-      destRoot: destFolder,
-      includeBinaries,
-      ref: site.branch,
-      onProgress: (data) => {
-        if (!event.sender.isDestroyed()) {
-          event.sender.send('pull:check-progress', data);
-        }
-      },
-    }));
-
-    // Requirement (2): even with nothing to pull, record that we just checked so
-    // the header's "Updated …" label resets. When there are changes, the
-    // watermark advances only once they're actually pulled (see pull:run).
-    if (status.totalCount === 0 && status.lastCheckedAt) {
-      await touchPullCheckedAt({
-        destRoot: destFolder,
-        org: site.org,
-        repo: site.repo,
-        lastCheckedAt: status.lastCheckedAt,
-      });
-    }
-
-    return status;
-  } finally {
-    pullChecksRunning -= 1;
+      lastCheckedAt: status.lastCheckedAt,
+    });
   }
+
+  return status;
 });
 
 ipcMain.handle('pull:run', async (event, {
@@ -1105,7 +1088,6 @@ ipcMain.handle('pull:run', async (event, {
     throw new Error('Site not found');
   }
 
-  assertNotDisconnecting();
   pullAbortController = new AbortController();
   const { signal } = pullAbortController;
 
@@ -1165,54 +1147,6 @@ ipcMain.handle('push:check', async (_event, {
 
 let revertAbortController = null;
 
-ipcMain.handle('sync:disconnect-folders', async (_event, { siteId, folderPaths }) => {
-  assertNotDisconnecting();
-  if (syncAbortController || pullAbortController || pushAbortController
-    || revertAbortController || pullChecksRunning > 0) {
-    throw new Error('Wait for the current download, update, upload or revert to finish');
-  }
-  disconnectingFolders = true;
-  try {
-    const site = findSite(await ensureSitesLoaded(), siteId);
-    if (!site) {
-      throw new Error('Site not found');
-    }
-    const destRoot = await loadSyncFolder(syncFolderStorePath());
-    if (!destRoot || !Array.isArray(folderPaths) || folderPaths.length === 0
-      || folderPaths.some((path) => typeof path !== 'string')) {
-      throw new Error('Select downloaded folders and a local sync folder first');
-    }
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: 'warning',
-      buttons: ['Cancel', 'Disconnect'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Disconnect Downloaded Folders',
-      message: `Disconnect ${folderPaths.length === 1 ? 'this folder' : 'these folders'}?`,
-      detail: [
-        `${site.org}/${site.repo}`,
-        ...folderPaths,
-        '',
-        'This permanently deletes these local folders, including local edits and new files, '
-          + 'and removes their stored originals and download history.',
-        'Remote content and other downloaded folders will not be changed. '
-          + 'You can download these folders again later.',
-      ].join('\n'),
-    });
-    if (response !== 1) {
-      return { disconnected: false };
-    }
-    syncListingCache = null;
-    await disconnectLocalFolders({
-      destRoot, org: site.org, repo: site.repo, folderPaths,
-    });
-    await computeSyncSummary({ destRoot, org: site.org, repo: site.repo });
-    return { disconnected: true };
-  } finally {
-    disconnectingFolders = false;
-  }
-});
-
 ipcMain.handle('revert:run', async (event, {
   siteId, destFolder, files,
 }) => {
@@ -1222,7 +1156,6 @@ ipcMain.handle('revert:run', async (event, {
     throw new Error('Site not found');
   }
 
-  assertNotDisconnecting();
   revertAbortController = new AbortController();
   const { signal } = revertAbortController;
 
@@ -1267,7 +1200,6 @@ ipcMain.handle('push:run', async (event, {
     throw new Error('Site not found');
   }
 
-  assertNotDisconnecting();
   pushAbortController = new AbortController();
   const { signal } = pushAbortController;
 

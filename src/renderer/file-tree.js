@@ -28,8 +28,6 @@ import { entryDisplayLabel, getIconByExtension } from './entry-utils.js';
  *   onRowClick: (item: object, event: MouseEvent) => void,
  *   onRowDoubleClick: (item: object, event: MouseEvent) => void,
  *   onSyncSelected?: () => void,
- *   onDisconnectSelected?: () => void,
- *   canDisconnect?: boolean,
  *   onPull?: () => void,
  *   onPush?: () => void,
  *   canPull?: boolean,
@@ -155,22 +153,6 @@ function renderPanelHeader(selectionCount, options) {
       onPush();
     });
     actions.append(pushBtn);
-  }
-
-  if (options.onDisconnectSelected) {
-    const disconnectBtn = document.createElement('button');
-    disconnectBtn.type = 'button';
-    disconnectBtn.className = 's2-btn';
-    disconnectBtn.textContent = 'Disconnect selected folders…';
-    disconnectBtn.disabled = !options.canDisconnect;
-    disconnectBtn.title = options.canDisconnect
-      ? 'Remove local files and forget these downloads; remote content is unchanged'
-      : 'Select downloaded folders to disconnect';
-    disconnectBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      options.onDisconnectSelected();
-    });
-    actions.append(disconnectBtn);
   }
 
   if (actions.childElementCount > 0) {
