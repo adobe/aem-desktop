@@ -1,3 +1,10 @@
+# [1.18.0](https://github.com/adobe/aem-desktop/compare/v1.17.0...v1.18.0) (2026-11-17)
+
+
+### Features
+
+* disconnect downloaded folders ([1580767](https://github.com/adobe/aem-desktop/commit/15807679e32bb6b021b98cdecd702f0f92aa8916))
+
 # [1.17.0](https://github.com/adobe/aem-desktop/compare/v1.16.0...v1.17.0) (2026-09-11)
 
 
