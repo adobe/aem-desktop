@@ -36,6 +36,15 @@ isolation; all privileged calls cross a minimal `contextBridge` in
 `src/preload/index.cjs`. See [`CLAUDE.md`](CLAUDE.md) for the full module map,
 hot-reload model, auto-update flow, and release process.
 
+## Disconnecting downloaded folders
+
+Select one or more downloaded folders in the content tree, then choose
+**Disconnect selected folders…** from the Content actions (under **…** in a
+narrow sidebar). Confirm to permanently remove those local folders, including
+local edits and new files, stored originals, and download tracking. Remote
+content and other downloaded folders are unchanged. Disconnected folders can
+be downloaded again; they are no longer included in updates or uploads.
+
 ## Releases
 
 Pushes to `main` trigger [semantic-release](https://semantic-release.gitbook.io/):
